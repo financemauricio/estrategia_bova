@@ -1,0 +1,148 @@
+"""Opções — register, monitor and close options positions."""
+
+from __future__ import annotations
+
+import datetime
+
+import pandas as pd
+import streamlit as st
+
+from modulos import banco
+
+st.title("📋 Opções")
+
+# ---------------------------------------------------------------------------
+# Summary KPIs
+# ---------------------------------------------------------------------------
+total_premios = banco.total_premios_recebidos()
+abertas = banco.listar_opcoes("ABERTA")
+exercidas = banco.listar_opcoes("EXERCIDA")
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Total de prêmios recebidos", f"R$ {total_premios:,.2f}")
+k2.metric("Posições abertas", len(abertas))
+k3.metric("Exercidas", len(exercidas))
+k4.metric("Expiradas / Roladas",
+          len(banco.listar_opcoes("EXPIRADA")) + len(banco.listar_opcoes("ROLADA")))
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Open positions
+# ---------------------------------------------------------------------------
+st.subheader("Posições Abertas")
+
+if abertas:
+    hoje = datetime.date.today()
+
+    rows = []
+    for op in abertas:
+        venc = op["vencimento"]
+        if isinstance(venc, str):
+            venc = datetime.date.fromisoformat(venc)
+        dias = (venc - hoje).days
+        alerta = "⚠️" if dias <= 5 else ""
+        rows.append(
+            {
+                "ID": op["id"],
+                "Tipo": op["tipo"],
+                "Código": op["codigo_opcao"] or "—",
+                "Strike": f"R$ {op['strike']:.2f}",
+                "Vencimento": str(venc),
+                "Dias": f"{dias} {alerta}",
+                "Qtd": op["quantidade"],
+                "Prêmio Unit.": f"R$ {op['premio_unitario']:.4f}",
+                "Prêmio Total": f"R$ {op['premio_total']:.2f}",
+                "Obs.": op["observacao"] or "",
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+else:
+    st.info("Nenhuma posição aberta.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Register new option sale
+# ---------------------------------------------------------------------------
+st.subheader("Registrar Venda de Opção")
+
+with st.form("form_opcao", clear_on_submit=True):
+    r1c1, r1c2, r1c3 = st.columns(3)
+    data_ab = r1c1.date_input("Data de abertura", value=datetime.date.today())
+    tipo_op = r1c2.selectbox("Tipo", ["PUT", "CALL"])
+    ativo_op = r1c3.selectbox("Ativo subjacente", ["BOVA11", "HASH11"])
+
+    r2c1, r2c2, r2c3 = st.columns(3)
+    codigo_op = r2c1.text_input("Código da opção", placeholder="ex: BOVAJ24")
+    strike_op = r2c2.number_input("Strike (R$)", min_value=0.01, step=0.50, format="%.2f")
+    venc_op = r2c3.date_input(
+        "Vencimento",
+        value=datetime.date.today() + datetime.timedelta(days=30),
+    )
+
+    r3c1, r3c2, r3c3 = st.columns(3)
+    qtd_op = r3c1.number_input("Quantidade (contratos)", min_value=1, step=1)
+    premio_op = r3c2.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f")
+    obs_op = r3c3.text_input("Observação")
+
+    total_preview = qtd_op * premio_op
+    st.caption(f"Prêmio total a receber: **R$ {total_preview:,.2f}**")
+
+    if st.form_submit_button("Registrar venda"):
+        banco.inserir_opcao(
+            data_abertura=str(data_ab),
+            tipo=tipo_op,
+            ativo=ativo_op,
+            codigo_opcao=codigo_op,
+            strike=strike_op,
+            vencimento=str(venc_op),
+            quantidade=int(qtd_op),
+            premio_unitario=premio_op,
+            observacao=obs_op,
+        )
+        st.success(f"Venda de {tipo_op} registrada. Prêmio total: R$ {total_preview:,.2f}")
+        st.rerun()
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Close / update open position
+# ---------------------------------------------------------------------------
+st.subheader("Encerrar Posição")
+
+if abertas:
+    id_opcoes = {f"ID {op['id']} — {op['tipo']} {op['codigo_opcao'] or ''} Strike {op['strike']} Venc. {op['vencimento']}": op["id"] for op in abertas}
+
+    with st.form("form_fechar", clear_on_submit=True):
+        opcao_sel = st.selectbox("Selecionar posição", list(id_opcoes.keys()))
+        fc1, fc2 = st.columns(2)
+        status_novo = fc1.selectbox("Novo status", ["EXERCIDA", "EXPIRADA", "ROLADA"])
+        data_fech = fc2.date_input("Data de fechamento", value=datetime.date.today())
+
+        if st.form_submit_button("Encerrar"):
+            banco.fechar_opcao(id_opcoes[opcao_sel], status_novo, str(data_fech))
+            st.success("Posição encerrada.")
+            st.rerun()
+else:
+    st.caption("Nenhuma posição aberta para encerrar.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Full history
+# ---------------------------------------------------------------------------
+st.subheader("Histórico Completo")
+
+todas = banco.listar_opcoes()
+if todas:
+    df = pd.DataFrame(todas)
+    df["premio_total"] = df["premio_total"].map(lambda x: f"R$ {x:,.2f}")
+    df["strike"] = df["strike"].map(lambda x: f"R$ {x:.2f}")
+    cols_show = [
+        "id", "data_abertura", "tipo", "ativo", "codigo_opcao",
+        "strike", "vencimento", "quantidade", "premio_total", "status", "data_fechamento",
+    ]
+    st.dataframe(df[cols_show], use_container_width=True, hide_index=True)
+else:
+    st.info("Nenhuma operação registrada ainda.")

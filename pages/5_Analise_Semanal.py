@@ -1,0 +1,232 @@
+"""Análise Semanal — 5-step checklist and BOVA11 + MA200 chart."""
+
+from __future__ import annotations
+
+import datetime
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from config import (
+    ALOCACAO_ALVO,
+    CAIXA_MIN_PCT,
+    LIMIAR_ALTA_CALL,
+    LIMIAR_QUEDA_PUT,
+    MA_PERIODO,
+)
+from modulos import banco, estrategia, mercado
+
+st.title("📅 Análise Semanal")
+st.caption("Use esta tela todo final de semana para revisar a estratégia.")
+
+# ---------------------------------------------------------------------------
+# Load data
+# ---------------------------------------------------------------------------
+dados = mercado.buscar_dados_mercado()
+posicoes = banco.listar_posicoes()
+saldo = banco.saldo_caixa()
+pat = mercado.calcular_patrimonio(posicoes, dados)
+total_etf = pat["total_etf"]
+
+resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf)
+passos = resultado["passos"]
+rec = resultado["recomendacao"]
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# BOVA11 chart with MA200
+# ---------------------------------------------------------------------------
+st.subheader("BOVA11 — Preço e Média de 200 dias (3 meses)")
+
+bova_hist: pd.DataFrame | None = dados.get("BOVA11", {}).get("hist")
+
+if bova_hist is not None and not bova_hist.empty:
+    df_chart = bova_hist.tail(65).copy()  # ~3 months of trading days
+    df_chart["MA200"] = bova_hist["Close"].rolling(MA_PERIODO).mean().tail(65).values
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Candlestick(
+            x=df_chart.index,
+            open=df_chart["Open"],
+            high=df_chart["High"],
+            low=df_chart["Low"],
+            close=df_chart["Close"],
+            name="BOVA11",
+            increasing_line_color="#2ecc71",
+            decreasing_line_color="#e74c3c",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=df_chart["MA200"],
+            mode="lines",
+            line=dict(color="#f39c12", width=2, dash="dot"),
+            name="MA 200",
+        )
+    )
+    fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=420,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(t=10, b=10),
+        yaxis_title="R$",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("Histórico de BOVA11 indisponível.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# 5-step checklist
+# ---------------------------------------------------------------------------
+st.subheader("Checklist dos 5 Passos")
+
+p1 = passos["passo1"]
+p2 = passos["passo2"]
+p3 = passos["passo3"]
+
+def _badge(ok: bool | None) -> str:
+    if ok is True:
+        return "🟢"
+    if ok is False:
+        return "🔴"
+    return "🟡"
+
+
+with st.container():
+    st.markdown(f"### {_badge(p1['ok'])} Passo 1 — BOVA11 vs MA200")
+    if p1["ok"]:
+        dist = p1.get("distancia_pct", 0)
+        st.write(
+            f"Preço: **R$ {p1['preco']:.2f}** | MA200: **R$ {p1['ma200']:.2f}** | "
+            f"Distância: **{dist*100:+.2f} %**"
+        )
+        if p1["resultado"] == "ACIMA":
+            st.success(f"BOVA11 **ACIMA** da MA200 → Viés **CALL** (vender CALL coberta)")
+        else:
+            st.error(f"BOVA11 **ABAIXO** da MA200 → Viés **PUT** (vender PUT)")
+    else:
+        st.warning("Dados insuficientes para avaliar.")
+
+st.divider()
+
+with st.container():
+    st.markdown(f"### {_badge(p2['ok'])} Passo 2 — Recursos Disponíveis")
+    st.write(p2.get("detalhe", "—"))
+    caixa_pct = p2.get("caixa_pct", 0)
+    if caixa_pct < CAIXA_MIN_PCT:
+        st.warning(
+            f"Caixa em {caixa_pct*100:.1f} % — abaixo do mínimo de {CAIXA_MIN_PCT*100:.0f} %. "
+            "Considere reforçar antes de abrir novas posições."
+        )
+    else:
+        st.success(f"Caixa em {caixa_pct*100:.1f} % — adequado.")
+
+st.divider()
+
+with st.container():
+    st.markdown(f"### {_badge(p3['ok'])} Passo 3 — Movimento Relevante")
+    var = p3.get("variacao", 0)
+    st.write(f"Variação de hoje: **{var*100:+.2f} %**")
+    if p3.get("queda_forte"):
+        st.error(
+            f"Queda forte ({var*100:.2f} %) — acima do limiar de {abs(LIMIAR_QUEDA_PUT)*100:.1f} %. "
+            "Prioridade máxima para PUT."
+        )
+    elif p3.get("alta_forte"):
+        st.success(
+            f"Alta forte (+{var*100:.2f} %) — acima do limiar de {LIMIAR_ALTA_CALL*100:.1f} %. "
+            "Prioridade máxima para CALL."
+        )
+    else:
+        st.info(
+            f"Movimento moderado ({var*100:+.2f} %). "
+            f"Não há prioridade máxima hoje (queda < {abs(LIMIAR_QUEDA_PUT)*100:.1f} % e "
+            f"alta < {LIMIAR_ALTA_CALL*100:.1f} %)."
+        )
+
+st.divider()
+
+with st.container():
+    st.markdown(f"### 🟡 Passo 4 — Prêmio Atrativo")
+    st.info(
+        "Confirme no Home Broker: o prêmio oferecido justifica o risco? "
+        "Evite vender em dias de baixa volatilidade implícita."
+    )
+    premium_ok = st.checkbox("Sim, o prêmio está atrativo")
+
+st.divider()
+
+with st.container():
+    st.markdown(f"### {_badge(rec != 'AGUARDAR' and premium_ok)} Passo 5 — Executar")
+    if not premium_ok:
+        st.warning("Confirme o prêmio no Passo 4 antes de prosseguir.")
+    elif rec == "PUT_ATM":
+        st.error(
+            "**VENDER PUT ATM** com vencimento mensal. "
+            "Aceitar exercício se houver. Rolar apenas se melhorar strike e prêmio."
+        )
+    elif rec == "CALL_OTM":
+        strike = resultado.get("strike_sugerido")
+        st.success(
+            f"**VENDER CALL 3% OTM** — strike sugerido R$ {strike:.2f}. "
+            "Aceitar exercício se houver. Rolar apenas se claramente vantajoso."
+        )
+    else:
+        st.info("**AGUARDAR** — condições não favorecem operação no momento.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Options expiring soon
+# ---------------------------------------------------------------------------
+st.subheader("Opções Vencendo em Breve")
+
+abertas = banco.listar_opcoes("ABERTA")
+hoje = datetime.date.today()
+proximas = []
+for op in abertas:
+    venc = op["vencimento"]
+    if isinstance(venc, str):
+        venc = datetime.date.fromisoformat(venc)
+    dias = (venc - hoje).days
+    if dias <= 10:
+        proximas.append(
+            {
+                "Tipo": op["tipo"],
+                "Código": op["codigo_opcao"] or "—",
+                "Strike": f"R$ {op['strike']:.2f}",
+                "Vencimento": str(venc),
+                "Dias restantes": dias,
+            }
+        )
+
+if proximas:
+    st.warning(f"{len(proximas)} opção(ões) vencendo nos próximos 10 dias:")
+    st.dataframe(pd.DataFrame(proximas), use_container_width=True, hide_index=True)
+else:
+    st.success("Nenhuma opção vencendo nos próximos 10 dias.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Allocation status
+# ---------------------------------------------------------------------------
+st.subheader("Status de Alocação")
+
+for ticker, alvo in ALOCACAO_ALVO.items():
+    atual = pat["alocacao"].get(ticker, 0)
+    desvio = atual - alvo
+    st.metric(
+        ticker,
+        f"{atual*100:.1f} %",
+        delta=f"{desvio*100:+.1f} % vs alvo {alvo*100:.0f} %",
+        delta_color="off",
+    )
