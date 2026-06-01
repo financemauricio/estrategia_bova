@@ -10,7 +10,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-from config import TICKERS, MA_PERIODO, HISTORICO_PERIODO, REFRESH_INTERVAL_SECONDS
+from config import TICKERS, MA_PERIODO, MA_VISUALIZACAO, HISTORICO_PERIODO, REFRESH_INTERVAL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -28,8 +28,9 @@ def buscar_dados_mercado() -> dict[str, dict]:
         Each value is a dict with:
         - preco       : float — latest closing price
         - variacao_pct: float — today's return (fraction, e.g. -0.015 = -1.5 %)
-        - ma200       : float | None — 200-day SMA, None if history is too short
-        - hist        : pd.DataFrame — full history (used for charts)
+        - ma_decisao  : float | None — MA used for strategy (MA_PERIODO)
+        - mas          : dict[int, float|None] — all MAs in MA_VISUALIZACAO
+        - hist        : pd.DataFrame — full history with MA columns (used for charts)
 
     Examples
     --------
@@ -54,15 +55,22 @@ def buscar_dados_mercado() -> dict[str, dict]:
         preco_ontem: float = float(hist["Close"].iloc[-2])
         variacao_pct: float = (preco_atual - preco_ontem) / preco_ontem
 
-        ma_series = hist["Close"].rolling(MA_PERIODO).mean()
-        ma200: float | None = (
-            float(ma_series.iloc[-1]) if len(hist) >= MA_PERIODO else None
-        )
+        # Calculate all MAs for visualisation
+        mas: dict[int, float | None] = {}
+        for janela in MA_VISUALIZACAO:
+            col = f"MA{janela}"
+            hist[col] = hist["Close"].rolling(janela).mean()
+            mas[janela] = (
+                round(float(hist[col].iloc[-1]), 2) if len(hist) >= janela else None
+            )
+
+        ma_decisao = mas.get(MA_PERIODO)
 
         resultado[nome] = {
             "preco": round(preco_atual, 2),
             "variacao_pct": round(variacao_pct, 6),
-            "ma200": round(ma200, 2) if ma200 is not None else None,
+            "ma_decisao": ma_decisao,
+            "mas": mas,
             "hist": hist,
         }
 

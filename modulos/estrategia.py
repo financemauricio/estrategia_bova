@@ -56,7 +56,7 @@ def avaliar_estrategia(
     """
     bova = dados_mercado.get("BOVA11", {})
     preco: float | None = bova.get("preco")
-    ma200: float | None = bova.get("ma200")
+    ma200: float | None = bova.get("ma_decisao")   # uses MA_PERIODO from config
     variacao: float = bova.get("variacao_pct", 0.0)
 
     patrimonio_total = total_etf + saldo_caixa

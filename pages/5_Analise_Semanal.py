@@ -14,6 +14,7 @@ from config import (
     LIMIAR_ALTA_CALL,
     LIMIAR_QUEDA_PUT,
     MA_PERIODO,
+    MA_VISUALIZACAO,
 )
 from modulos import banco, estrategia, mercado
 
@@ -38,13 +39,19 @@ st.divider()
 # ---------------------------------------------------------------------------
 # BOVA11 chart with MA200
 # ---------------------------------------------------------------------------
-st.subheader("BOVA11 — Preço e Média de 200 dias (3 meses)")
+st.subheader(f"BOVA11 — Preço com MA{MA_PERIODO} (decisão) + referências (3 meses)")
 
 bova_hist: pd.DataFrame | None = dados.get("BOVA11", {}).get("hist")
 
+# Colours and dash styles per MA window
+_MA_STYLES: dict[int, dict] = {
+    25:  {"color": "#2ecc71", "dash": "solid",  "width": 2},
+    50:  {"color": "#f39c12", "dash": "dot",    "width": 2},
+    200: {"color": "#e74c3c", "dash": "dashdot","width": 1},
+}
+
 if bova_hist is not None and not bova_hist.empty:
     df_chart = bova_hist.tail(65).copy()  # ~3 months of trading days
-    df_chart["MA200"] = bova_hist["Close"].rolling(MA_PERIODO).mean().tail(65).values
 
     fig = go.Figure()
     fig.add_trace(
@@ -59,25 +66,34 @@ if bova_hist is not None and not bova_hist.empty:
             decreasing_line_color="#e74c3c",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=df_chart.index,
-            y=df_chart["MA200"],
-            mode="lines",
-            line=dict(color="#f39c12", width=2, dash="dot"),
-            name="MA 200",
-        )
-    )
+
+    for janela in MA_VISUALIZACAO:
+        col_name = f"MA{janela}"
+        if col_name in bova_hist.columns:
+            series = bova_hist[col_name].tail(65)
+            style = _MA_STYLES.get(janela, {"color": "#888", "dash": "dot", "width": 1})
+            label = f"MA{janela}" + (" ★" if janela == MA_PERIODO else "")
+            fig.add_trace(
+                go.Scatter(
+                    x=df_chart.index,
+                    y=series.values,
+                    mode="lines",
+                    line=dict(color=style["color"], width=style["width"], dash=style["dash"]),
+                    name=label,
+                )
+            )
+
     fig.update_layout(
         xaxis_rangeslider_visible=False,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=420,
+        height=440,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(t=10, b=10),
         yaxis_title="R$",
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"★ MA{MA_PERIODO} é a média usada para decisão. MA50 e MA200 são referências visuais.")
 else:
     st.warning("Histórico de BOVA11 indisponível.")
 
@@ -91,6 +107,7 @@ st.subheader("Checklist dos 5 Passos")
 p1 = passos["passo1"]
 p2 = passos["passo2"]
 p3 = passos["passo3"]
+ma_decisao_val = p1.get("ma200")
 
 def _badge(ok: bool | None) -> str:
     if ok is True:
@@ -101,17 +118,18 @@ def _badge(ok: bool | None) -> str:
 
 
 with st.container():
-    st.markdown(f"### {_badge(p1['ok'])} Passo 1 — BOVA11 vs MA200")
+    st.markdown(f"### {_badge(p1['ok'])} Passo 1 — BOVA11 vs MA{MA_PERIODO}")
     if p1["ok"]:
         dist = p1.get("distancia_pct", 0)
+        ma_val = p1.get("ma200")
         st.write(
-            f"Preço: **R$ {p1['preco']:.2f}** | MA200: **R$ {p1['ma200']:.2f}** | "
+            f"Preço: **R$ {p1['preco']:.2f}** | MA{MA_PERIODO}: **R$ {ma_val:.2f}** | "
             f"Distância: **{dist*100:+.2f} %**"
         )
         if p1["resultado"] == "ACIMA":
-            st.success(f"BOVA11 **ACIMA** da MA200 → Viés **CALL** (vender CALL coberta)")
+            st.success(f"BOVA11 **ACIMA** da MA{MA_PERIODO} → Viés **CALL** (vender CALL coberta)")
         else:
-            st.error(f"BOVA11 **ABAIXO** da MA200 → Viés **PUT** (vender PUT)")
+            st.error(f"BOVA11 **ABAIXO** da MA{MA_PERIODO} → Viés **PUT** (vender PUT)")
     else:
         st.warning("Dados insuficientes para avaliar.")
 

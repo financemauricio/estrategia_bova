@@ -9,10 +9,11 @@ from streamlit_autorefresh import st_autorefresh  # type: ignore[import]
 
 from config import (
     ALOCACAO_ALVO,
-    APORTE_MENSAL,
     CAIXA_MIN_PCT,
     LIMIAR_ALTA_CALL,
     LIMIAR_QUEDA_PUT,
+    MA_PERIODO,
+    MA_VISUALIZACAO,
     REFRESH_INTERVAL_SECONDS,
 )
 from modulos import alertas, banco, estrategia, mercado
@@ -23,7 +24,7 @@ from modulos import alertas, banco, estrategia, mercado
 try:
     st_autorefresh(interval=REFRESH_INTERVAL_SECONDS * 1_000, key="dashboard_refresh")
 except Exception:
-    pass  # streamlit-autorefresh not installed — skip silently
+    pass
 
 st.title("📊 Dashboard")
 
@@ -51,49 +52,64 @@ if dados:
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Patrimônio Total", f"R$ {patrimonio_total:,.2f}")
 col2.metric("Total em ETFs", f"R$ {total_etf:,.2f}")
-col3.metric("Caixa", f"R$ {saldo:,.2f}", f"{saldo/patrimonio_total*100:.1f} %" if patrimonio_total else "")
+
+caixa_pct = saldo / patrimonio_total if patrimonio_total > 0 else 0.0
+col3.metric("Caixa", f"R$ {saldo:,.2f}", f"{caixa_pct*100:.1f} %" if patrimonio_total else "")
 col4.metric(
     "Caixa vs Mínimo",
-    f"{saldo/patrimonio_total*100:.1f} %" if patrimonio_total else "—",
-    delta_color="normal" if saldo / patrimonio_total >= CAIXA_MIN_PCT else "inverse",
+    f"{caixa_pct*100:.1f} %" if patrimonio_total else "—",
+    delta_color="normal" if caixa_pct >= CAIXA_MIN_PCT else "inverse",
 )
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# BOVA11 main card
+# BOVA11 main card — price + all MAs
 # ---------------------------------------------------------------------------
 bova = dados.get("BOVA11", {})
 preco_bova = bova.get("preco")
 var_bova = bova.get("variacao_pct", 0.0)
-ma200 = bova.get("ma200")
+ma_decisao = bova.get("ma_decisao")
+mas = bova.get("mas", {})
 
-if preco_bova and ma200:
-    acima = preco_bova > ma200
-    distancia = (preco_bova - ma200) / ma200
+if preco_bova and ma_decisao:
+    acima = preco_bova > ma_decisao
+    distancia = (preco_bova - ma_decisao) / ma_decisao
 
-    st.subheader("BOVA11 — Indicador Principal")
+    st.subheader(f"BOVA11 — Indicador Principal (MA{MA_PERIODO} para decisão)")
+
     ca, cb, cc, cd = st.columns(4)
-
     ca.metric("Preço", f"R$ {preco_bova:.2f}", mercado.variacao_fmt(var_bova))
-    cb.metric("MA 200", f"R$ {ma200:.2f}")
-    cc.metric(
-        "Posição vs MA200",
-        "ACIMA ↑" if acima else "ABAIXO ↓",
-        f"{distancia*100:+.2f} %",
+    cb.metric(
+        f"MA{MA_PERIODO} (decisão)",
+        f"R$ {ma_decisao:.2f}",
+        f"{'ACIMA ↑' if acima else 'ABAIXO ↓'} {distancia*100:+.1f} %",
         delta_color="normal" if acima else "inverse",
     )
-    cd.metric("Variação Hoje", mercado.variacao_fmt(var_bova))
+    cc.metric("Variação Hoje", mercado.variacao_fmt(var_bova))
+    cd.metric("Viés", "🟢 CALL" if acima else "🔴 PUT")
+
+    # Other MAs for reference
+    outras_mas = [j for j in MA_VISUALIZACAO if j != MA_PERIODO]
+    if outras_mas:
+        cols_ma = st.columns(len(outras_mas))
+        for col_ma, janela in zip(cols_ma, outras_mas):
+            val = mas.get(janela)
+            if val:
+                dist = (preco_bova - val) / val
+                col_ma.metric(
+                    f"MA{janela} (referência)",
+                    f"R$ {val:.2f}",
+                    f"{'↑' if preco_bova > val else '↓'} {dist*100:+.1f} %",
+                    delta_color="normal" if preco_bova > val else "inverse",
+                )
 
     # Opportunity alert banner
     if var_bova <= LIMIAR_QUEDA_PUT:
-        st.error(
-            f"⚡ QUEDA FORTE: {var_bova*100:.2f} % — PRIORIDADE MÁXIMA para venda de PUT"
-        )
+        st.error(f"⚡ QUEDA FORTE: {var_bova*100:.2f} % — PRIORIDADE MÁXIMA para venda de PUT")
     elif var_bova >= LIMIAR_ALTA_CALL:
-        st.success(
-            f"⚡ ALTA FORTE: {var_bova*100:+.2f} % — PRIORIDADE MÁXIMA para venda de CALL"
-        )
+        st.success(f"⚡ ALTA FORTE: {var_bova*100:+.2f} % — PRIORIDADE MÁXIMA para venda de CALL")
+
 else:
     st.warning("Dados de BOVA11 indisponíveis. Verifique a conexão.")
 
@@ -118,13 +134,12 @@ for col, nome in [(ce, "IVVB11"), (cf, "HASH11")]:
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Strategy recommendation box
+# Strategy recommendation
 # ---------------------------------------------------------------------------
 st.subheader("Recomendação da Estratégia")
 
 resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf)
 rec = resultado["recomendacao"]
-vies = resultado["vies"]
 prioridade = resultado["prioridade"]
 mensagem = resultado["mensagem"]
 
@@ -139,12 +154,10 @@ elif rec == "CALL_OTM":
 else:
     st.info(f"⏸ AGUARDAR — {mensagem}")
 
-# Passo 4 manual confirmation
 with st.expander("Passo 4 — Confirmar atratividade do prêmio"):
     st.markdown(
         "Antes de operar, verifique no seu Home Broker se o prêmio está atrativo. "
-        "A regra geral é **não vender opções em dias sem movimento** — prefira dias "
-        f"de queda > {abs(LIMIAR_QUEDA_PUT)*100:.0f} % (PUT) ou "
+        f"Prefira dias de queda > {abs(LIMIAR_QUEDA_PUT)*100:.0f} % (PUT) ou "
         f"alta > {LIMIAR_ALTA_CALL*100:.0f} % (CALL)."
     )
 
@@ -155,23 +168,18 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("Passos da Decisão Semanal")
 passos = resultado["passos"]
-
 p1 = passos["passo1"]
 p2 = passos["passo2"]
 p3 = passos["passo3"]
 
 def _icone(ok: bool | None) -> str:
-    if ok is True:
-        return "✅"
-    if ok is False:
-        return "❌"
-    return "❓"
+    return "✅" if ok is True else ("❌" if ok is False else "❓")
 
 st.markdown(
     f"""
 | Passo | Resultado |
 |---|---|
-| {_icone(p1['ok'])} 1 — BOVA11 vs MA200 | **{p1.get('resultado', '—')}** — viés **{p1.get('vies', '—')}** |
+| {_icone(p1['ok'])} 1 — BOVA11 vs MA{MA_PERIODO} | **{p1.get('resultado', '—')}** — viés **{p1.get('vies', '—')}** |
 | {_icone(p2['ok'])} 2 — Recursos disponíveis | {p2.get('detalhe', '—')} |
 | {_icone(p3['ok'])} 3 — Movimento relevante | {p3.get('detalhe', '—')} |
 | {_icone(None)} 4 — Prêmio atrativo | Confirmação manual |
@@ -179,10 +187,7 @@ st.markdown(
 """
 )
 
-# ---------------------------------------------------------------------------
-# Footer
-# ---------------------------------------------------------------------------
 st.caption(
-    f"Dados atualizados a cada {REFRESH_INTERVAL_SECONDS // 60} min via yfinance. "
-    f"Última atualização: {time.strftime('%d/%m/%Y %H:%M')}."
+    f"Decisão baseada na MA{MA_PERIODO}. Referências visuais: MA{', MA'.join(str(j) for j in MA_VISUALIZACAO)}. "
+    f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — {time.strftime('%d/%m/%Y %H:%M')}."
 )
