@@ -21,18 +21,30 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 
 def _get_db_url() -> str:
-    """Return DATABASE_URL from Streamlit secrets or .env fallback."""
+    """Return DATABASE_URL from Streamlit secrets or .env fallback.
+
+    Special characters in the password are percent-encoded automatically so
+    psycopg2 can parse the URI correctly (e.g. ``&``, ``}``, ``)`` etc.).
+    """
+    from urllib.parse import urlparse, quote, urlunparse
+
     try:
-        return st.secrets["DATABASE_URL"]
+        raw = st.secrets["DATABASE_URL"]
     except Exception:
         from dotenv import load_dotenv
         load_dotenv()
-        url = os.getenv("DATABASE_URL")
-        if not url:
+        raw = os.getenv("DATABASE_URL")
+        if not raw:
             raise RuntimeError(
                 "DATABASE_URL não configurado. Copie .env.example para .env e preencha."
             )
-        return url
+
+    parsed = urlparse(raw)
+    if parsed.password:
+        encoded_pw = quote(parsed.password, safe="")
+        netloc = f"{parsed.username}:{encoded_pw}@{parsed.hostname}:{parsed.port}"
+        return urlunparse(parsed._replace(netloc=netloc))
+    return raw
 
 
 @contextlib.contextmanager
