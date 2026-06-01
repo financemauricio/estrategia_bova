@@ -5,7 +5,12 @@ from __future__ import annotations
 import time
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh  # type: ignore[import]
+
+try:
+    from streamlit_autorefresh import st_autorefresh as _st_autorefresh  # type: ignore[import]
+    _HAS_AUTOREFRESH = True
+except ImportError:
+    _HAS_AUTOREFRESH = False
 
 from config import (
     ALOCACAO_ALVO,
@@ -21,10 +26,11 @@ from modulos import alertas, banco, estrategia, mercado
 # ---------------------------------------------------------------------------
 # Auto-refresh every REFRESH_INTERVAL_SECONDS milliseconds
 # ---------------------------------------------------------------------------
-try:
-    st_autorefresh(interval=REFRESH_INTERVAL_SECONDS * 1_000, key="dashboard_refresh")
-except Exception:
-    pass
+if _HAS_AUTOREFRESH:
+    try:
+        _st_autorefresh(interval=REFRESH_INTERVAL_SECONDS * 1_000, key="dashboard_refresh")
+    except Exception:
+        pass
 
 st.title("📊 Dashboard")
 
