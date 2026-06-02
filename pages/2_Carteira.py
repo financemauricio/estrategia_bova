@@ -27,21 +27,29 @@ patrimonio_total = total_etf + saldo
 st.subheader("Posições Atuais")
 
 if posicoes:
+    from config import TICKERS_USD
     rows = []
     for pos in posicoes:
         ticker = pos["ticker"]
         qtd = pos["quantidade"]
-        pm = pos["preco_medio"]
-        preco_atual = dados.get(ticker, {}).get("preco", 0.0)
-        valor_atual = qtd * preco_atual
+        pm = pos["preco_medio"]  # stored in native currency (USD for IVV)
+        d = dados.get(ticker, {})
+        preco_atual = d.get("preco", 0.0)
+        preco_brl = d.get("preco_brl", preco_atual)
+        moeda = d.get("moeda", "BRL")
+        em_usd = ticker in TICKERS_USD
+
+        valor_atual_brl = qtd * preco_brl
         variacao_pm = (preco_atual - pm) / pm if pm else 0.0
+
         rows.append(
             {
                 "Ticker": ticker,
-                "Quantidade": qtd,
-                "Preço Médio": f"R$ {pm:.2f}",
-                "Preço Atual": f"R$ {preco_atual:.2f}",
-                "Valor Atual": f"R$ {valor_atual:,.2f}",
+                "Qtd": qtd,
+                "PM": f"US$ {pm:.2f}" if em_usd else f"R$ {pm:.2f}",
+                "Preço Atual": f"US$ {preco_atual:.2f}" if em_usd else f"R$ {preco_atual:.2f}",
+                "≈ BRL": f"R$ {preco_brl:.2f}" if em_usd else "—",
+                "Valor (BRL)": f"R$ {valor_atual_brl:,.2f}",
                 "Var. vs PM": f"{variacao_pm*100:+.2f} %",
             }
         )
@@ -93,9 +101,12 @@ sugestao = mercado.sugerir_alocacao_aporte(aporte_val, patrimonio, saldo, ALOCAC
 
 cs = st.columns(len(sugestao))
 for col, (ticker, valor) in zip(cs, sugestao.items()):
-    preco = dados.get(ticker, {}).get("preco", 0.0)
-    qtd = valor / preco if preco else 0.0
-    col.metric(ticker, f"R$ {valor:,.2f}", f"≈ {qtd:.2f} cotas")
+    d = dados.get(ticker, {})
+    # IVV: divide BRL amount by BRL-equivalent price to get share quantity
+    preco_ref = d.get("preco_brl") or d.get("preco", 0.0)
+    qtd = valor / preco_ref if preco_ref else 0.0
+    moeda_label = "US$" if d.get("moeda") == "USD" else "R$"
+    col.metric(ticker, f"R$ {valor:,.2f}", f"≈ {qtd:.4f} cotas ({moeda_label})")
 
 st.caption(
     "Sugestão calculada para aproximar a alocação atual ao alvo (70/20/10). "

@@ -127,15 +127,25 @@ st.divider()
 st.subheader("Outros ETFs")
 ce, cf = st.columns(2)
 
-for col, nome in [(ce, "IVVB11"), (cf, "HASH11")]:
+for col, nome in [(ce, "IVV"), (cf, "HASH11")]:
     d = dados.get(nome, {})
     p = d.get("preco")
+    p_brl = d.get("preco_brl")
+    moeda = d.get("moeda", "BRL")
     v = d.get("variacao_pct", 0.0)
     alvo = ALOCACAO_ALVO.get(nome, 0)
     atual = patrimonio_calc["alocacao"].get(nome, 0)
     with col:
-        st.metric(nome, f"R$ {p:.2f}" if p else "—", mercado.variacao_fmt(v) if p else "")
-        st.caption(f"Alvo: {alvo*100:.0f} %  |  Atual: {atual*100:.1f} %")
+        if p:
+            if moeda == "USD":
+                st.metric(nome, f"US$ {p:.2f}", mercado.variacao_fmt(v))
+                usdbrl = d.get("usdbrl", 0)
+                st.caption(f"≈ R$ {p_brl:.2f}  |  USD/BRL: {usdbrl:.2f}  |  Alvo: {alvo*100:.0f} %  |  Atual: {atual*100:.1f} %")
+            else:
+                st.metric(nome, f"R$ {p:.2f}", mercado.variacao_fmt(v))
+                st.caption(f"Alvo: {alvo*100:.0f} %  |  Atual: {atual*100:.1f} %")
+        else:
+            st.metric(nome, "—")
 
 st.divider()
 

@@ -59,14 +59,17 @@ with st.form("form_aporte", clear_on_submit=True):
         "HASH11 — R$", min_value=0.0, value=sug.get("HASH11", 0.0), step=10.0, format="%.2f"
     )
 
-    # Compute quantities from market price
+    # Compute quantities using BRL-equivalent price for IVV
     def _qtd(ticker: str, valor: float) -> float:
-        p = dados.get(ticker, {}).get("preco", 0.0)
+        d = dados.get(ticker, {})
+        p = d.get("preco_brl") or d.get("preco", 0.0)
         return valor / p if p else 0.0
 
+    ivv_d = dados.get("IVV", {})
+    ivv_label = f"IVV ≈ {_qtd('IVV', ivvb_val):.4f} cotas (US$ {ivv_d.get('preco', 0):.2f} / ≈ R$ {ivv_d.get('preco_brl', 0):.2f})"
     st.caption(
         f"BOVA11 ≈ {_qtd('BOVA11', bova_val):.2f} cotas | "
-        f"IVVB11 ≈ {_qtd('IVVB11', ivvb_val):.2f} cotas | "
+        f"{ivv_label} | "
         f"HASH11 ≈ {_qtd('HASH11', hash_val):.2f} cotas"
     )
 
@@ -78,7 +81,7 @@ with st.form("form_aporte", clear_on_submit=True):
             valor_total=valor_total_ap,
             bova11_qtd=_qtd("BOVA11", bova_val),
             bova11_valor=bova_val,
-            ivvb11_qtd=_qtd("IVVB11", ivvb_val),
+            ivvb11_qtd=_qtd("IVV", ivvb_val),
             ivvb11_valor=ivvb_val,
             hash11_qtd=_qtd("HASH11", hash_val),
             hash11_valor=hash_val,

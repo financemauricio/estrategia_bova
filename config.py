@@ -3,16 +3,23 @@
 # Target portfolio allocation (must sum to 1.0)
 ALOCACAO_ALVO: dict[str, float] = {
     "BOVA11": 0.70,
-    "IVVB11": 0.20,
+    "IVV":    0.20,
     "HASH11": 0.10,
 }
 
-# yfinance tickers (Brazilian exchange suffix .SA)
+# yfinance tickers
+# IVV is USD-denominated (NYSE); price is converted to BRL for allocation calculations
 TICKERS: dict[str, str] = {
     "BOVA11": "BOVA11.SA",
-    "IVVB11": "IVVB11.SA",
+    "IVV":    "IVV",        # NYSE — USD
     "HASH11": "HASH11.SA",
 }
+
+# Tickers whose prices are in USD and need BRL conversion for allocation math
+TICKERS_USD: set[str] = {"IVV"}
+
+# yfinance ticker for USD/BRL exchange rate
+TICKER_USDBRL: str = "USDBRL=X"
 
 # Minimum cash as fraction of total portfolio
 CAIXA_MIN_PCT: float = 0.05
