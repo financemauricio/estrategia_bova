@@ -94,8 +94,11 @@ def buscar_dados_mercado() -> dict[str, dict]:
 
         hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
-        # Drop rows with zero or clearly anomalous closes (e.g. partial intraday bar)
-        hist = hist[hist["Close"] > 0].copy()
+        # Drop rows with any zero OHLC value (partial/corrupt intraday bars)
+        for col_ohlc in ["Open", "High", "Low", "Close"]:
+            if col_ohlc in hist.columns:
+                hist = hist[hist[col_ohlc] > 0]
+        # Drop rows with anomalous daily move > 50 %
         var_diaria = hist["Close"].pct_change().abs()
         hist = hist[(var_diaria < 0.50) | var_diaria.isna()].copy()
 
