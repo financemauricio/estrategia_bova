@@ -128,6 +128,7 @@ def init_db() -> None:
 # Posicoes
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60, show_spinner=False)
 def listar_posicoes() -> list[dict[str, Any]]:
     """Return all ticker positions.
 
@@ -165,12 +166,14 @@ def upsert_posicao(ticker: str, quantidade: float, preco_medio: float) -> None:
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(sql, (ticker, quantidade, preco_medio))
+    st.cache_data.clear()
 
 
 # ---------------------------------------------------------------------------
 # Opcoes
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60, show_spinner=False)
 def listar_opcoes(status: str | None = None) -> list[dict[str, Any]]:
     """Return options records, optionally filtered by status.
 
@@ -244,6 +247,7 @@ def inserir_opcao(
                     quantidade, premio_unitario, premio_unitario * quantidade, observacao,
                 ),
             )
+    st.cache_data.clear()
 
 
 def fechar_opcao(opcao_id: int, status: str, data_fechamento: str) -> None:
@@ -265,12 +269,14 @@ def fechar_opcao(opcao_id: int, status: str, data_fechamento: str) -> None:
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(sql, (status, data_fechamento, opcao_id))
+    st.cache_data.clear()
 
 
 # ---------------------------------------------------------------------------
 # Aportes
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60, show_spinner=False)
 def listar_aportes() -> list[dict[str, Any]]:
     """Return all contribution records ordered by date descending."""
     with _conn() as con:
@@ -328,12 +334,14 @@ def inserir_aporte(
                     observacao,
                 ),
             )
+    st.cache_data.clear()
 
 
 # ---------------------------------------------------------------------------
 # Caixa
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60, show_spinner=False)
 def saldo_caixa() -> float:
     """Compute current cash balance from all ledger entries.
 
@@ -373,8 +381,10 @@ def registrar_caixa(data: str, tipo: str, valor: float, descricao: str = "") -> 
                 "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, %s, %s, %s)",
                 (data, tipo, valor, descricao),
             )
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def listar_caixa(limit: int = 30) -> list[dict[str, Any]]:
     """Return the most recent cash entries.
 
@@ -396,6 +406,7 @@ def listar_caixa(limit: int = 30) -> list[dict[str, Any]]:
 # Aggregations used across pages
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60, show_spinner=False)
 def total_premios_recebidos() -> float:
     """Sum of all option premiums collected (open + closed)."""
     with _conn() as con:
@@ -404,6 +415,7 @@ def total_premios_recebidos() -> float:
             return float(cur.fetchone()[0])
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def total_aportado() -> float:
     """Sum of all contribution amounts."""
     with _conn() as con:
