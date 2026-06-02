@@ -27,33 +27,34 @@ patrimonio_total = total_etf + saldo
 st.subheader("Posições Atuais")
 
 if posicoes:
-    from config import TICKERS_USD
     rows = []
     for pos in posicoes:
         ticker = pos["ticker"]
         qtd = pos["quantidade"]
-        pm = pos["preco_medio"]  # stored in native currency (USD for IVV)
+        pm_brl = pos["preco_medio"]  # sempre armazenado em R$ (inclusive IVV)
         d = dados.get(ticker, {})
-        preco_atual = d.get("preco", 0.0)
-        preco_brl = d.get("preco_brl", preco_atual)
+        preco_atual_usd = d.get("preco", 0.0)
+        preco_brl = d.get("preco_brl", preco_atual_usd)
         moeda = d.get("moeda", "BRL")
-        em_usd = ticker in TICKERS_USD
+        em_usd = moeda == "USD"
 
         valor_atual_brl = qtd * preco_brl
-        variacao_pm = (preco_atual - pm) / pm if pm else 0.0
+        # Variação sempre comparada em BRL para IVV
+        variacao_pm = (preco_brl - pm_brl) / pm_brl if pm_brl else 0.0
 
-        rows.append(
-            {
-                "Ticker": ticker,
-                "Qtd": qtd,
-                "PM": f"US$ {pm:.2f}" if em_usd else f"R$ {pm:.2f}",
-                "Preço Atual": f"US$ {preco_atual:.2f}" if em_usd else f"R$ {preco_atual:.2f}",
-                "≈ BRL": f"R$ {preco_brl:.2f}" if em_usd else "—",
-                "Valor (BRL)": f"R$ {valor_atual_brl:,.2f}",
-                "Var. vs PM": f"{variacao_pm*100:+.2f} %",
-            }
-        )
+        row: dict = {
+            "Ticker": ticker,
+            "Qtd": qtd,
+            "PM (R$)": f"R$ {pm_brl:.2f}",
+            "Preço Atual": f"US$ {preco_atual_usd:.2f}" if em_usd else f"R$ {preco_brl:.2f}",
+            "Valor (R$)": f"R$ {valor_atual_brl:,.2f}",
+            "Var. vs PM": f"{variacao_pm*100:+.2f} %",
+        }
+        if em_usd:
+            row["≈ R$ atual"] = f"R$ {preco_brl:.2f}"
+        rows.append(row)
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("PM do IVV armazenado em R$ — variação calculada contra equivalente BRL do preço atual.")
 else:
     st.info("Nenhuma posição registrada. Adicione abaixo.")
 
@@ -124,7 +125,8 @@ with st.form("form_posicao", clear_on_submit=True):
     col_a, col_b, col_c = st.columns(3)
     ticker_sel = col_a.selectbox("Ticker", list(ALOCACAO_ALVO.keys()))
     qtd_input = col_b.number_input("Quantidade total de cotas", min_value=0.0, step=1.0, format="%.4f")
-    pm_input = col_c.number_input("Preço médio (R$)", min_value=0.0, step=0.01, format="%.4f")
+    pm_label = "Preço médio (R$) — para IVV use o custo em R$ por cota"
+    pm_input = col_c.number_input(pm_label, min_value=0.0, step=0.01, format="%.4f")
 
     submitted = st.form_submit_button("Salvar posição")
     if submitted:
