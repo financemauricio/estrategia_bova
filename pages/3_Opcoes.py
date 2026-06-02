@@ -28,6 +28,74 @@ k4.metric("Expiradas / Roladas",
 st.divider()
 
 # ---------------------------------------------------------------------------
+# Caixa comprometido com PUTs abertas
+# ---------------------------------------------------------------------------
+st.subheader("💰 Caixa vs. Compromisso com PUTs")
+
+saldo = banco.saldo_caixa()
+
+puts_abertas = [op for op in abertas if op["tipo"] == "PUT"]
+comprometido = sum(op["strike"] * op["quantidade"] for op in puts_abertas)
+disponivel = saldo - comprometido
+pct_comprometido = comprometido / saldo if saldo > 0 else 0.0
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Saldo total em caixa", f"R$ {saldo:,.2f}")
+c2.metric(
+    "Comprometido com PUTs",
+    f"R$ {comprometido:,.2f}",
+    help="Σ strike × quantidade de todas as PUTs abertas — valor necessário se exercidas.",
+)
+c3.metric(
+    "Caixa disponível",
+    f"R$ {disponivel:,.2f}",
+    delta=f"{(1 - pct_comprometido) * 100:.1f}% livre",
+    delta_color="normal" if disponivel >= 0 else "inverse",
+)
+c4.metric("% comprometido", f"{pct_comprometido * 100:.1f}%")
+
+if disponivel < 0:
+    st.error(
+        "🚨 **Caixa insuficiente!** O valor comprometido com PUTs supera o saldo disponível. "
+        "Não venda novas PUTs até encerrar ou rolar posições."
+    )
+elif pct_comprometido >= 0.80:
+    st.warning(
+        "⚠️ **Caixa muito comprometido** (≥ 80%). Evite novas PUTs até alguma posição expirar ou ser exercida."
+    )
+elif pct_comprometido >= 0.50:
+    st.info(
+        "ℹ️ **Atenção:** mais de 50% do caixa já está reservado para PUTs abertas. "
+        "Avalie com cuidado antes de vender novas PUTs."
+    )
+else:
+    st.success(
+        f"✅ Caixa confortável — {(1 - pct_comprometido) * 100:.1f}% livre para novas operações."
+    )
+
+if puts_abertas:
+    with st.expander("Detalhes do comprometimento por PUT"):
+        rows_put = []
+        for op in puts_abertas:
+            exp = op["vencimento"]
+            if isinstance(exp, str):
+                exp = datetime.date.fromisoformat(exp)
+            dias = (exp - datetime.date.today()).days
+            reserva = op["strike"] * op["quantidade"]
+            rows_put.append({
+                "Código": op["codigo_opcao"] or "—",
+                "Strike": f"R$ {op['strike']:.2f}",
+                "Qtd": op["quantidade"],
+                "Reserva (R$)": f"R$ {reserva:,.2f}",
+                "% do caixa": f"{reserva / saldo * 100:.1f}%" if saldo > 0 else "—",
+                "Vencimento": str(exp),
+                "Dias restantes": dias,
+            })
+        st.dataframe(pd.DataFrame(rows_put), use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ---------------------------------------------------------------------------
 # Open positions
 # ---------------------------------------------------------------------------
 st.subheader("Posições Abertas")
