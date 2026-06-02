@@ -94,6 +94,14 @@ def buscar_dados_mercado() -> dict[str, dict]:
 
         hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
+        # Drop rows with zero or clearly anomalous closes (e.g. partial intraday bar)
+        hist = hist[hist["Close"] > 0].copy()
+        var_diaria = hist["Close"].pct_change().abs()
+        hist = hist[(var_diaria < 0.50) | var_diaria.isna()].copy()
+
+        if len(hist) < 2:
+            continue
+
         preco_atual: float = float(hist["Close"].iloc[-1])
         preco_ontem: float = float(hist["Close"].iloc[-2])
         variacao_pct: float = (preco_atual - preco_ontem) / preco_ontem
