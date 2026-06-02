@@ -12,18 +12,24 @@ from modulos import banco
 st.title("📋 Opções")
 
 # ---------------------------------------------------------------------------
+# Single-fetch: all options + cash balance (2 DB round-trips total)
+# ---------------------------------------------------------------------------
+todas = banco.listar_opcoes()
+saldo = banco.saldo_caixa()
+
+abertas   = [o for o in todas if o["status"] == "ABERTA"]
+exercidas = [o for o in todas if o["status"] == "EXERCIDA"]
+expiradas = [o for o in todas if o["status"] in ("EXPIRADA", "ROLADA")]
+total_premios = sum(o["premio_total"] for o in todas)
+
+# ---------------------------------------------------------------------------
 # Summary KPIs
 # ---------------------------------------------------------------------------
-total_premios = banco.total_premios_recebidos()
-abertas = banco.listar_opcoes("ABERTA")
-exercidas = banco.listar_opcoes("EXERCIDA")
-
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total de prêmios recebidos", f"R$ {total_premios:,.2f}")
 k2.metric("Posições abertas", len(abertas))
 k3.metric("Exercidas", len(exercidas))
-k4.metric("Expiradas / Roladas",
-          len(banco.listar_opcoes("EXPIRADA")) + len(banco.listar_opcoes("ROLADA")))
+k4.metric("Expiradas / Roladas", len(expiradas))
 
 st.divider()
 
@@ -31,8 +37,6 @@ st.divider()
 # Caixa comprometido com PUTs abertas
 # ---------------------------------------------------------------------------
 st.subheader("💰 Caixa vs. Compromisso com PUTs")
-
-saldo = banco.saldo_caixa()
 
 puts_abertas = [op for op in abertas if op["tipo"] == "PUT"]
 comprometido = sum(op["strike"] * op["quantidade"] for op in puts_abertas)
@@ -202,7 +206,6 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("Histórico Completo")
 
-todas = banco.listar_opcoes()
 if todas:
     df = pd.DataFrame(todas)
     df["premio_total"] = df["premio_total"].map(lambda x: f"R$ {x:,.2f}")
