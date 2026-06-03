@@ -5,6 +5,7 @@ Credentials are read from Streamlit secrets (cloud) or .env (local).
 
 from __future__ import annotations
 
+import datetime
 import os
 import smtplib
 import ssl
@@ -102,6 +103,133 @@ def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | N
     msg["From"] = cfg["remetente"]
     msg["To"] = cfg["destinatario"]
     msg.attach(MIMEText(_html_template(tipo, variacao_pct, preco, ma200), "html"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(cfg["host"], int(cfg["port"])) as server:
+            server.starttls(context=context)
+            server.login(cfg["remetente"], cfg["senha"])
+            server.sendmail(cfg["remetente"], cfg["destinatario"], msg.as_string())
+        return True
+    except Exception:
+        return False
+
+
+def _html_vencimentos(opcoes: list[dict]) -> str:
+    """Build HTML email body for expiry summary."""
+    hoje = datetime.date.today()
+    exercidas = [o for o in opcoes if o["status"] == "EXERCIDA"]
+    outras = [o for o in opcoes if o["status"] != "EXERCIDA"]
+    total_deposito = sum(o["strike"] * o["quantidade"] for o in exercidas)
+
+    linhas_exercidas = ""
+    for o in exercidas:
+        valor = o["strike"] * o["quantidade"]
+        linhas_exercidas += f"""
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #333">{(o['codigo_opcao'] or '—').upper()}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">R$ {o['strike']:.2f}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">{o['quantidade']}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right;color:#e74c3c"><strong>R$ {valor:,.2f}</strong></td>
+        </tr>"""
+
+    linhas_outras = ""
+    for o in outras:
+        status_cor = "#2ecc71" if o["status"] == "EXPIRADA" else "#f39c12"
+        linhas_outras += f"""
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #333">{(o['codigo_opcao'] or '—').upper()}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">R$ {o['strike']:.2f}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">{o['quantidade']}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right;color:{status_cor}">{o['status']}</td>
+        </tr>"""
+
+    deposito_bloco = ""
+    if exercidas:
+        deposito_bloco = f"""
+        <div style="background:#e74c3c;color:#fff;padding:14px 20px;border-radius:6px;
+                    margin:16px 0;font-size:1.1rem;font-weight:bold;text-align:center">
+          🏦 Deposite R$ {total_deposito:,.2f} na corretora
+        </div>
+        <p style="color:#ccc;font-size:0.9rem">
+          Esse valor é necessário para honrar o exercício das PUTs acima.
+          Faça a transferência antes da abertura do mercado.
+        </p>"""
+
+    tabela_ex = f"""
+        <h3 style="color:#e74c3c">⚠️ Exercidas ({len(exercidas)})</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+          <tr style="color:#888;font-size:0.85rem">
+            <th style="text-align:left;padding:6px">Código</th>
+            <th style="text-align:right;padding:6px">Strike</th>
+            <th style="text-align:right;padding:6px">Qtd</th>
+            <th style="text-align:right;padding:6px">Valor a depositar</th>
+          </tr>
+          {linhas_exercidas}
+        </table>
+        {deposito_bloco}
+    """ if exercidas else ""
+
+    tabela_outras = f"""
+        <h3 style="color:#2ecc71">✅ Outras vencidas ({len(outras)})</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+          <tr style="color:#888;font-size:0.85rem">
+            <th style="text-align:left;padding:6px">Código</th>
+            <th style="text-align:right;padding:6px">Strike</th>
+            <th style="text-align:right;padding:6px">Qtd</th>
+            <th style="text-align:right;padding:6px">Status</th>
+          </tr>
+          {linhas_outras}
+        </table>
+    """ if outras else ""
+
+    return f"""
+    <html><body style="font-family:sans-serif;background:#0e1117;color:#fafafa;padding:24px">
+      <div style="max-width:560px;margin:auto;background:#1a1d27;border-radius:8px;padding:24px">
+        <h2 style="margin-top:0;color:#fafafa">📋 Resumo Semanal de Opções</h2>
+        <p style="color:#aaa">{hoje.strftime('%d/%m/%Y')} — opções vencidas na semana passada:</p>
+        {tabela_ex}
+        {tabela_outras}
+        <p style="color:#888;font-size:0.8rem;margin-top:20px">
+          Atualize o status das posições no painel de Opções.
+        </p>
+      </div>
+    </body></html>
+    """
+
+
+def alertar_vencimentos(opcoes_vencidas: list[dict]) -> bool:
+    """Send Monday expiry summary e-mail.
+
+    Parameters
+    ----------
+    opcoes_vencidas : list[dict]
+        Options whose ``vencimento`` fell in the past 7 days.
+
+    Returns
+    -------
+    bool
+        True if sent successfully, False otherwise.
+    """
+    if not opcoes_vencidas:
+        return False
+
+    cfg = _get_cfg()
+    if not cfg["remetente"] or not cfg["senha"]:
+        return False
+
+    exercidas = [o for o in opcoes_vencidas if o["status"] == "EXERCIDA"]
+    assunto = (
+        f"[ETF Estratégia] 🏦 AÇÃO NECESSÁRIA — {len(exercidas)} PUT(s) exercida(s)"
+        if exercidas
+        else f"[ETF Estratégia] 📋 Resumo — {len(opcoes_vencidas)} opção(ões) vencida(s)"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = assunto
+    msg["From"] = cfg["remetente"]
+    msg["To"] = cfg["destinatario"]
+    msg.attach(MIMEText(_html_vencimentos(opcoes_vencidas), "html"))
 
     try:
         context = ssl.create_default_context()

@@ -58,6 +58,40 @@ if dados:
     alertas.verificar_e_alertar(dados)
 
 # ---------------------------------------------------------------------------
+# Monday expiry summary — send once per day using session_state guard
+# ---------------------------------------------------------------------------
+import datetime as _dt
+
+_hoje = _dt.date.today()
+_session_key = f"expiry_email_sent_{_hoje.isoformat()}"
+
+if _hoje.weekday() == 0 and not st.session_state.get(_session_key):
+    _semana_atras = _hoje - _dt.timedelta(days=7)
+    _todas_opcoes = banco.listar_opcoes()
+    _vencidas_semana = []
+    for _op in _todas_opcoes:
+        _venc = _op["vencimento"]
+        if isinstance(_venc, str):
+            _venc = _dt.date.fromisoformat(_venc)
+        if _semana_atras <= _venc < _hoje:
+            _vencidas_semana.append(_op)
+
+    if _vencidas_semana:
+        _enviado = alertas.alertar_vencimentos(_vencidas_semana)
+        st.session_state[_session_key] = True
+        if _enviado:
+            _exercidas_n = sum(1 for o in _vencidas_semana if o["status"] == "EXERCIDA")
+            if _exercidas_n:
+                st.warning(
+                    f"📧 Email enviado: {_exercidas_n} opção(ões) exercida(s) na semana passada. "
+                    "Verifique se precisa depositar na corretora."
+                )
+            else:
+                st.info(f"📧 Resumo semanal enviado: {len(_vencidas_semana)} opção(ões) vencida(s).")
+    else:
+        st.session_state[_session_key] = True  # nenhuma vencida, não tentar novamente hoje
+
+# ---------------------------------------------------------------------------
 # Top KPIs
 # ---------------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
