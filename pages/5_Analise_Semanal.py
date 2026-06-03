@@ -27,10 +27,11 @@ st.caption("Use esta tela todo final de semana para revisar a estratégia.")
 dados = mercado.buscar_dados_mercado()
 posicoes = banco.listar_posicoes()
 saldo = banco.saldo_caixa()
+opcoes_abertas = banco.listar_opcoes("ABERTA")
 pat = mercado.calcular_patrimonio(posicoes, dados)
 total_etf = pat["total_etf"]
 
-resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf)
+resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf, opcoes_abertas)
 passos = resultado["passos"]
 rec = resultado["recomendacao"]
 
@@ -127,48 +128,53 @@ with st.container():
             f"Distância: **{dist*100:+.2f} %**"
         )
         if p1["resultado"] == "ACIMA":
-            st.success(f"BOVA11 **ACIMA** da MA{MA_PERIODO} → Viés **CALL** (vender CALL coberta)")
+            st.success(f"✅ BOVA11 **ACIMA** da MA{MA_PERIODO} → Viés **CALL** (vender CALL coberta)")
         else:
-            st.error(f"BOVA11 **ABAIXO** da MA{MA_PERIODO} → Viés **PUT** (vender PUT)")
+            st.success(f"✅ BOVA11 **ABAIXO** da MA{MA_PERIODO} → Viés **PUT** (vender PUT)")
     else:
-        st.warning("Dados insuficientes para avaliar.")
+        st.error("❌ Dados insuficientes para avaliar.")
 
 st.divider()
 
 with st.container():
     st.markdown(f"### {_badge(p2['ok'])} Passo 2 — Recursos Disponíveis")
     st.write(p2.get("detalhe", "—"))
-    caixa_pct = p2.get("caixa_pct", 0)
-    if caixa_pct < CAIXA_MIN_PCT:
-        st.warning(
-            f"Caixa em {caixa_pct*100:.1f} % — abaixo do mínimo de {CAIXA_MIN_PCT*100:.0f} %. "
-            "Considere reforçar antes de abrir novas posições."
-        )
+    if p2["ok"]:
+        st.success("✅ Recursos suficientes para operar.")
     else:
-        st.success(f"Caixa em {caixa_pct*100:.1f} % — adequado.")
+        st.error("❌ Recursos insuficientes — não abra novas posições.")
 
 st.divider()
 
 with st.container():
-    st.markdown(f"### {_badge(p3['ok'])} Passo 3 — Movimento Relevante")
+    st.markdown(f"### {_badge(p3['ok'])} Passo 3 — Movimento Relevante (na direção do viés)")
     var = p3.get("variacao", 0)
-    st.write(f"Variação de hoje: **{var*100:+.2f} %**")
-    if p3.get("queda_forte"):
-        st.error(
-            f"Queda forte ({var*100:.2f} %) — acima do limiar de {abs(LIMIAR_QUEDA_PUT)*100:.1f} %. "
-            "Prioridade máxima para PUT."
-        )
-    elif p3.get("alta_forte"):
-        st.success(
-            f"Alta forte (+{var*100:.2f} %) — acima do limiar de {LIMIAR_ALTA_CALL*100:.1f} %. "
-            "Prioridade máxima para CALL."
-        )
+    vies_atual = resultado.get("vies", "INDEFINIDO")
+    st.write(f"Variação de hoje: **{var*100:+.2f} %** | Viés: **{vies_atual}**")
+    if p3["ok"]:
+        if p3.get("queda_forte"):
+            st.success(
+                f"✅ Queda de {abs(var)*100:.2f} % — sinal de PUT confirmado "
+                f"(limiar: {abs(LIMIAR_QUEDA_PUT)*100:.1f} %). Prioridade máxima."
+            )
+        elif p3.get("alta_forte"):
+            st.success(
+                f"✅ Alta de {var*100:.2f} % — sinal de CALL confirmado "
+                f"(limiar: {LIMIAR_ALTA_CALL*100:.1f} %). Prioridade máxima."
+            )
     else:
-        st.info(
-            f"Movimento moderado ({var*100:+.2f} %). "
-            f"Não há prioridade máxima hoje (queda < {abs(LIMIAR_QUEDA_PUT)*100:.1f} % e "
-            f"alta < {LIMIAR_ALTA_CALL*100:.1f} %)."
-        )
+        if vies_atual == "PUT":
+            st.error(
+                f"❌ Sem queda relevante hoje ({var*100:+.2f} %). "
+                f"Aguarde queda ≥ {abs(LIMIAR_QUEDA_PUT)*100:.1f} % para prioridade máxima."
+            )
+        elif vies_atual == "CALL":
+            st.error(
+                f"❌ Sem alta relevante hoje ({var*100:+.2f} %). "
+                f"Aguarde alta ≥ {LIMIAR_ALTA_CALL*100:.1f} % para prioridade máxima."
+            )
+        else:
+            st.warning("Viés indefinido — aguardar dados de mercado.")
 
 st.divider()
 

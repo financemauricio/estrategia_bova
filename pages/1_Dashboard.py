@@ -42,6 +42,7 @@ with st.spinner("Buscando dados de mercado..."):
 
 posicoes = banco.listar_posicoes()
 saldo = banco.saldo_caixa()
+opcoes_abertas = banco.listar_opcoes("ABERTA")
 patrimonio_calc = mercado.calcular_patrimonio(posicoes, dados)
 total_etf = patrimonio_calc["total_etf"]
 patrimonio_total = total_etf + saldo
@@ -154,7 +155,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("Recomendação da Estratégia")
 
-resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf)
+resultado = estrategia.avaliar_estrategia(dados, posicoes, saldo, total_etf, opcoes_abertas)
 rec = resultado["recomendacao"]
 prioridade = resultado["prioridade"]
 mensagem = resultado["mensagem"]

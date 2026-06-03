@@ -24,6 +24,7 @@ def avaliar_estrategia(
     posicoes: list[dict],
     saldo_caixa: float,
     total_etf: float,
+    opcoes_abertas: list[dict] | None = None,
 ) -> dict:
     """Run the 5-step strategy and return a structured recommendation.
 
@@ -37,6 +38,9 @@ def avaliar_estrategia(
         Current cash balance (BRL).
     total_etf : float
         Total market value of all ETF positions (BRL).
+    opcoes_abertas : list[dict] or None
+        Open option positions from ``banco.listar_opcoes('ABERTA')``.
+        Used to compute committed cash in step 2.
 
     Returns
     -------
@@ -93,12 +97,28 @@ def avaliar_estrategia(
     caixa_pct = saldo_caixa / patrimonio_total if patrimonio_total > 0 else 0.0
     pos_map = {p["ticker"]: p for p in posicoes}
 
+    # Cash committed to open PUTs (strike × qty for each open PUT)
+    puts_abertas = [o for o in (opcoes_abertas or []) if o.get("tipo") == "PUT"]
+    comprometido = sum(o["strike"] * o["quantidade"] for o in puts_abertas)
+    saldo_disponivel = saldo_caixa - comprometido
+
     if vies == "PUT":
-        recursos_ok = caixa_pct >= CAIXA_MIN_PCT
-        detalhe_recursos = (
-            f"Caixa {caixa_pct*100:.1f} % do patrimônio "
-            f"({'OK' if recursos_ok else f'mínimo {CAIXA_MIN_PCT*100:.0f} %'})"
-        )
+        recursos_ok = saldo_disponivel > 0 and caixa_pct >= CAIXA_MIN_PCT
+        if comprometido > 0 and saldo_disponivel <= 0:
+            detalhe_recursos = (
+                f"Caixa 100% comprometido com PUTs abertas "
+                f"(reserva R$ {comprometido:,.2f}). Não venda novas PUTs."
+            )
+        elif comprometido > 0:
+            detalhe_recursos = (
+                f"Caixa disponível: R$ {saldo_disponivel:,.2f} "
+                f"(R$ {comprometido:,.2f} reservado para PUTs abertas)"
+            )
+        else:
+            detalhe_recursos = (
+                f"Caixa {caixa_pct*100:.1f} % do patrimônio "
+                f"({'OK' if recursos_ok else f'mínimo {CAIXA_MIN_PCT*100:.0f} %'})"
+            )
     else:
         bova_qtd = pos_map.get("BOVA11", {}).get("quantidade", 0)
         recursos_ok = bova_qtd > 0
@@ -109,15 +129,24 @@ def avaliar_estrategia(
     passo2 = {
         "ok": recursos_ok,
         "caixa_pct": caixa_pct,
+        "comprometido": comprometido,
+        "saldo_disponivel": saldo_disponivel,
         "detalhe": detalhe_recursos,
     }
 
     # ------------------------------------------------------------------
-    # Step 3 — Relevant daily movement
+    # Step 3 — Relevant daily movement in the direction of the bias
     # ------------------------------------------------------------------
     queda_forte = variacao <= LIMIAR_QUEDA_PUT
     alta_forte = variacao >= LIMIAR_ALTA_CALL
-    movimento_relevante = queda_forte or alta_forte
+
+    # Signal must match the bias direction
+    if vies == "PUT":
+        movimento_relevante = queda_forte
+    elif vies == "CALL":
+        movimento_relevante = alta_forte
+    else:
+        movimento_relevante = False
 
     passo3 = {
         "ok": movimento_relevante,
@@ -126,8 +155,8 @@ def avaliar_estrategia(
         "alta_forte": alta_forte,
         "detalhe": (
             f"Variação do dia: {variacao*100:+.2f} %"
-            + (" — QUEDA FORTE ⚡" if queda_forte else "")
-            + (" — ALTA FORTE ⚡" if alta_forte else "")
+            + (" — QUEDA FORTE ⚡" if queda_forte and vies == "PUT" else "")
+            + (" — ALTA FORTE ⚡" if alta_forte and vies == "CALL" else "")
         ),
     }
 
