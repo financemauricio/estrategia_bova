@@ -30,31 +30,61 @@ if posicoes:
     rows = []
     for pos in posicoes:
         ticker = pos["ticker"]
-        qtd = pos["quantidade"]
-        pm_brl = pos["preco_medio"]  # sempre armazenado em R$ (inclusive IVV)
-        d = dados.get(ticker, {})
-        preco_atual_usd = d.get("preco", 0.0)
-        preco_brl = d.get("preco_brl", preco_atual_usd)
-        moeda = d.get("moeda", "BRL")
-        em_usd = moeda == "USD"
+        qtd    = pos["quantidade"]
+        pm_brl = pos["preco_medio"]   # always stored in BRL
+        d      = dados.get(ticker, {})
+        preco_usd = d.get("preco", 0.0)
+        preco_brl = d.get("preco_brl", preco_usd)
+        usdbrl    = d.get("usdbrl", 1.0)
+        em_usd    = d.get("moeda", "BRL") == "USD"
 
-        valor_atual_brl = qtd * preco_brl
-        # Variação sempre comparada em BRL para IVV
-        variacao_pm = (preco_brl - pm_brl) / pm_brl if pm_brl else 0.0
+        valor_brl = qtd * preco_brl
 
-        row: dict = {
-            "Ticker": ticker,
-            "Qtd": qtd,
-            "PM (R$)": f"R$ {pm_brl:.2f}",
-            "Preço Atual": f"US$ {preco_atual_usd:.2f}" if em_usd else f"R$ {preco_brl:.2f}",
-            "Valor (R$)": f"R$ {valor_atual_brl:,.2f}",
-            "Var. vs PM": f"{variacao_pm*100:+.2f} %",
-        }
         if em_usd:
-            row["≈ R$ atual"] = f"R$ {preco_brl:.2f}"
-        rows.append(row)
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption("PM do IVV armazenado em R$ — variação calculada contra equivalente BRL do preço atual.")
+            # Convert stored BRL PM to USD using current rate for display
+            pm_display       = f"US$ {pm_brl / usdbrl:.2f}" if usdbrl else f"R$ {pm_brl:.2f}"
+            preco_display    = f"US$ {preco_usd:.2f}"
+            variacao_pm      = (preco_usd - pm_brl / usdbrl) / (pm_brl / usdbrl) if pm_brl and usdbrl else 0.0
+        else:
+            pm_display       = f"R$ {pm_brl:.2f}"
+            preco_display    = f"R$ {preco_brl:.2f}"
+            variacao_pm      = (preco_brl - pm_brl) / pm_brl if pm_brl else 0.0
+
+        var_cor = "+" if variacao_pm >= 0 else ""
+        rows.append({
+            "Ticker":       ticker,
+            "Qtd":          f"{qtd:.4f}".rstrip("0").rstrip("."),
+            "Preço Pago":   pm_display,
+            "Preço Atual":  preco_display,
+            "Variação":     f"{var_cor}{variacao_pm*100:.2f} %",
+            "Valor (R$)":   f"R$ {valor_brl:,.2f}",
+        })
+
+    df_pos = pd.DataFrame(rows)
+    fig_pos = go.Figure(go.Table(
+        header=dict(
+            values=[f"<b>{c}</b>" for c in df_pos.columns],
+            fill_color="#1a1d27",
+            font=dict(color="white", size=13),
+            align="center",
+            line_color="#333",
+        ),
+        cells=dict(
+            values=[df_pos[c].tolist() for c in df_pos.columns],
+            fill_color="#0e1117",
+            font=dict(color="white", size=12),
+            align="center",
+            line_color="#222",
+            height=32,
+        ),
+    ))
+    fig_pos.update_layout(
+        margin=dict(t=0, b=0, l=0, r=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=60 + len(rows) * 36,
+    )
+    st.plotly_chart(fig_pos, use_container_width=True)
+    st.caption("IVV em US$ — PM convertido de R$ para US$ pela taxa atual. Valor Total sempre em R$.")
 else:
     st.info("Nenhuma posição registrada. Adicione abaixo.")
 
@@ -125,8 +155,12 @@ with st.form("form_posicao", clear_on_submit=True):
     col_a, col_b, col_c = st.columns(3)
     ticker_sel = col_a.selectbox("Ticker", list(ALOCACAO_ALVO.keys()))
     qtd_input = col_b.number_input("Quantidade total de cotas", min_value=0.0, step=1.0, format="%.4f")
-    pm_label = "Preço médio (R$) — para IVV use o custo em R$ por cota"
-    pm_input = col_c.number_input(pm_label, min_value=0.0, step=0.01, format="%.4f")
+    _is_ivv = ticker_sel == "IVV"
+    pm_label = "Preço médio (US$) — será convertido para R$" if _is_ivv else "Preço médio (R$)"
+    pm_input_raw = col_c.number_input(pm_label, min_value=0.0, step=0.01, format="%.4f")
+    # Store IVV PM in BRL (multiply by current USDBRL)
+    _usdbrl_now = dados.get("IVV", {}).get("usdbrl", 1.0) if _is_ivv else 1.0
+    pm_input = pm_input_raw * _usdbrl_now if _is_ivv else pm_input_raw
 
     submitted = st.form_submit_button("Salvar posição")
     if submitted:
