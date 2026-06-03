@@ -349,7 +349,12 @@ st.subheader("Posições Abertas")
 if abertas:
     hoje = datetime.date.today()
 
+    # PUT = azul escuro  |  CALL = verde escuro
+    _COR_PUT  = "#0d2137"
+    _COR_CALL = "#0d2b1a"
+
     rows = []
+    row_colors: list[str] = []
     for op in abertas:
         venc = op["vencimento"]
         if isinstance(venc, str):
@@ -362,6 +367,7 @@ if abertas:
         rows.append(
             {
                 "Código": (op["codigo_opcao"] or "—").upper(),
+                "Tipo": op["tipo"],
                 "Strike": f"R$ {op['strike']:.2f}",
                 "Spot": f"R$ {spot:.2f}" if spot else "—",
                 "Distância": dist,
@@ -372,8 +378,13 @@ if abertas:
                 "Obs.": op["observacao"] or "",
             }
         )
+        row_colors.append(_COR_PUT if op["tipo"] == "PUT" else _COR_CALL)
+
     df_abertas = pd.DataFrame(rows)
-    # Plotly table for full centering control
+    # Plotly table — row color per tipo (PUT=blue, CALL=green)
+    # fill_color must be a list of column-length lists (one per column)
+    n_cols = len(df_abertas.columns)
+    cell_colors = [row_colors] * n_cols  # same color palette for every column
     fig_tbl = go.Figure(go.Table(
         header=dict(
             values=[f"<b>{c}</b>" for c in df_abertas.columns],
@@ -384,7 +395,7 @@ if abertas:
         ),
         cells=dict(
             values=[df_abertas[c].tolist() for c in df_abertas.columns],
-            fill_color="#0e1117",
+            fill_color=cell_colors,
             font=dict(color="white", size=12),
             align="center",
             line_color="#222",
@@ -397,7 +408,10 @@ if abertas:
         height=60 + len(rows) * 36,
     )
     st.plotly_chart(fig_tbl, use_container_width=True)
-    st.caption("🟢 < 25 %  🟡 25–50 %  🔴 > 50 % — probabilidade calculada via Black-Scholes com vol. histórica 20d.")
+    st.caption(
+        "🔵 PUT  🟩 CALL  ·  "
+        "🟢 < 25 %  🟡 25–50 %  🔴 > 50 % — probabilidade via Black-Scholes, vol. histórica 20d."
+    )
 else:
     st.info("Nenhuma posição aberta.")
 
