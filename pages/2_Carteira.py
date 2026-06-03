@@ -89,31 +89,103 @@ else:
     st.info("Nenhuma posição registrada. Adicione abaixo.")
 
 # ---------------------------------------------------------------------------
-# Allocation chart — actual vs target
+# Allocation chart — actual vs target + buy-to-rebalance calculator
 # ---------------------------------------------------------------------------
 st.subheader("Alocação Atual vs Alvo")
 
 tickers = list(ALOCACAO_ALVO.keys())
-alvo_vals = [ALOCACAO_ALVO[t] * 100 for t in tickers]
-atual_vals = [patrimonio["alocacao"].get(t, 0) * 100 for t in tickers]
+alvo_vals   = [ALOCACAO_ALVO[t] * 100 for t in tickers]
+atual_vals  = [patrimonio["alocacao"].get(t, 0) * 100 for t in tickers]
+por_ticker  = patrimonio["por_ticker"]
+
+# Colour each bar: green if at/above target, orange if below
+bar_colors = [
+    "#2ecc71" if atual_vals[i] >= alvo_vals[i] else "#e67e22"
+    for i in range(len(tickers))
+]
 
 fig = go.Figure()
-fig.add_trace(
-    go.Bar(name="Alvo %", x=tickers, y=alvo_vals, marker_color="#888888", opacity=0.6)
-)
-fig.add_trace(
-    go.Bar(name="Atual %", x=tickers, y=atual_vals, marker_color="#2ecc71")
-)
+fig.add_trace(go.Bar(
+    name="Alvo %", x=tickers, y=alvo_vals,
+    marker_color="#555", opacity=0.5,
+))
+fig.add_trace(go.Bar(
+    name="Atual %", x=tickers, y=atual_vals,
+    marker_color=bar_colors,
+))
 fig.update_layout(
     barmode="group",
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     legend=dict(orientation="h", yanchor="bottom", y=1.02),
     yaxis_title="% do patrimônio em ETFs",
-    height=320,
+    height=300,
     margin=dict(t=10, b=10),
 )
 st.plotly_chart(fig, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Buy-to-rebalance: exact amount in R$ needed for each under-allocated asset
+# (no-sell assumption — only compute purchases for assets below target)
+# ---------------------------------------------------------------------------
+st.subheader("🛒 Quanto comprar para rebalancear")
+
+# Identify under-allocated assets
+under = {t: ALOCACAO_ALVO[t] for t in tickers if por_ticker.get(t, 0) < ALOCACAO_ALVO[t] * total_etf}
+
+if not under:
+    st.success("✅ Carteira dentro do alvo — nenhuma compra necessária.")
+else:
+    # Exact solution (no-sell):
+    # New total S = (total_etf - Σv_under) / (1 - Σalvo_under)
+    # Buy_i = alvo_i × S - v_i  for each underallocated asset i
+    soma_alvo_under  = sum(ALOCACAO_ALVO[t] for t in under)
+    soma_valor_under = sum(por_ticker.get(t, 0) for t in under)
+    denom = 1 - soma_alvo_under
+
+    if denom <= 0:
+        # Edge case: all weight goes to underallocated — buy proportionally
+        novo_total = None
+    else:
+        novo_total = (total_etf - soma_valor_under) / denom
+
+    buy_cols = st.columns(len(under))
+    for col, (ticker, alvo_pct) in zip(buy_cols, under.items()):
+        valor_atual = por_ticker.get(ticker, 0.0)
+        if novo_total:
+            comprar_brl = alvo_pct * novo_total - valor_atual
+        else:
+            comprar_brl = 0.0
+        comprar_brl = max(comprar_brl, 0.0)
+
+        d = dados.get(ticker, {})
+        preco_brl = d.get("preco_brl") or d.get("preco", 0.0)
+        em_usd = d.get("moeda", "BRL") == "USD"
+        usdbrl = d.get("usdbrl", 1.0)
+        cotas = comprar_brl / preco_brl if preco_brl else 0.0
+
+        if em_usd:
+            comprar_usd = comprar_brl / usdbrl
+            col.metric(
+                f"{ticker}",
+                f"R$ {comprar_brl:,.2f}",
+                f"≈ US$ {comprar_usd:,.2f} · {cotas:.4f} cotas",
+            )
+        else:
+            col.metric(
+                f"{ticker}",
+                f"R$ {comprar_brl:,.2f}",
+                f"≈ {cotas:.2f} cotas @ R$ {preco_brl:.2f}",
+            )
+
+    total_comprar = sum(
+        max((ALOCACAO_ALVO[t] * novo_total - por_ticker.get(t, 0.0)), 0.0)
+        for t in under
+    ) if novo_total else 0.0
+    st.caption(
+        f"Total a aportar para atingir o alvo: **R$ {total_comprar:,.2f}**. "
+        "Cálculo assume que apenas os ativos abaixo do alvo serão comprados, sem vender os demais."
+    )
 
 # ---------------------------------------------------------------------------
 # Contribution calculator
