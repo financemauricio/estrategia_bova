@@ -32,10 +32,10 @@ LIMIAR_QUEDA_PUT: float = -0.015   # daily drop >= 1.5 % → PUT priority
 LIMIAR_ALTA_CALL: float = 0.020    # daily rise >= 2.0 % → CALL priority
 
 # Moving-average window used for strategy decisions (days)
-MA_PERIODO: int = 25
+MA_PERIODO: int = 50
 
 # Additional MAs shown on charts for visual reference only
-MA_VISUALIZACAO: list[int] = [25, 50, 200]
+MA_VISUALIZACAO: list[int] = [50, 100, 200]
 
 # Fixed monthly contribution amount (BRL)
 APORTE_MENSAL: float = 5_000.0
@@ -44,4 +44,4 @@ APORTE_MENSAL: float = 5_000.0
 REFRESH_INTERVAL_SECONDS: int = 300
 
 # History window for fetching prices (must be > largest MA in MA_VISUALIZACAO)
-HISTORICO_PERIODO: str = "300d"
+HISTORICO_PERIODO: str = "400d"
