@@ -7,7 +7,9 @@ import datetime
 import pandas as pd
 import streamlit as st
 
-from modulos import banco
+import math
+
+from modulos import banco, bs, mercado
 
 st.title("📋 Opções")
 
@@ -16,6 +18,61 @@ st.title("📋 Opções")
 # ---------------------------------------------------------------------------
 todas = banco.listar_opcoes()
 saldo = banco.saldo_caixa()
+
+# Market data for probability calculation (cached — no extra round-trip cost)
+_dados_mkt = mercado.buscar_dados_mercado()
+_selic = bs.buscar_selic()
+
+def _prob_exercicio(tipo: str, ativo: str, strike: float, dias: int) -> float | None:
+    """Return probability of exercise [0, 1] using Black-Scholes N(±d2).
+
+    Parameters
+    ----------
+    tipo : str
+        'PUT' or 'CALL'.
+    ativo : str
+        Underlying asset name, e.g. 'BOVA11'.
+    strike : float
+        Option strike price.
+    dias : int
+        Calendar days to expiry.
+
+    Returns
+    -------
+    float or None
+        Probability in [0, 1], or None if data is unavailable.
+    """
+    d = _dados_mkt.get(ativo, {})
+    hist = d.get("hist")
+    preco = d.get("preco")
+    if hist is None or preco is None or preco <= 0 or dias <= 0:
+        return None
+    try:
+        sigma = bs.calcular_vol_historica(hist, janela=20)
+    except Exception:
+        return None
+    T = max(dias, 1) / 252
+    r = _selic
+    if sigma <= 0 or T <= 0:
+        return None
+    d1_num = math.log(preco / strike) + (r + 0.5 * sigma ** 2) * T
+    d2 = (d1_num / (sigma * math.sqrt(T))) - sigma * math.sqrt(T)
+    # N(d2) = prob CALL exercised; N(-d2) = prob PUT exercised
+    norm_d2 = (1.0 + math.erf(d2 / math.sqrt(2.0))) / 2.0
+    return (1 - norm_d2) if tipo == "PUT" else norm_d2
+
+
+def _prob_badge(prob: float | None) -> str:
+    if prob is None:
+        return "—"
+    pct = prob * 100
+    if pct >= 50:
+        emoji = "🔴"
+    elif pct >= 25:
+        emoji = "🟡"
+    else:
+        emoji = "🟢"
+    return f"{emoji} {pct:.1f}%"
 
 abertas   = [o for o in todas if o["status"] == "ABERTA"]
 exercidas = [o for o in todas if o["status"] == "EXERCIDA"]
@@ -114,6 +171,7 @@ if abertas:
             venc = datetime.date.fromisoformat(venc)
         dias = (venc - hoje).days
         alerta = "⚠️" if dias <= 5 else ""
+        prob = _prob_exercicio(op["tipo"], op["ativo"], op["strike"], dias)
         rows.append(
             {
                 "ID": op["id"],
@@ -125,10 +183,12 @@ if abertas:
                 "Qtd": op["quantidade"],
                 "Prêmio Unit.": f"R$ {op['premio_unitario']:.4f}",
                 "Prêmio Total": f"R$ {op['premio_total']:.2f}",
+                "Prob. Exercício": _prob_badge(prob),
                 "Obs.": op["observacao"] or "",
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("🟢 < 25 %  🟡 25–50 %  🔴 > 50 % — probabilidade calculada via Black-Scholes com vol. histórica 20d.")
 else:
     st.info("Nenhuma posição aberta.")
 
