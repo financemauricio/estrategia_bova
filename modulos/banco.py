@@ -250,6 +250,46 @@ def inserir_opcao(
     st.cache_data.clear()
 
 
+def editar_opcao(
+    opcao_id: int,
+    strike: float,
+    vencimento: str,
+    quantidade: int,
+    premio_unitario: float,
+    observacao: str,
+) -> None:
+    """Update editable fields of an existing option record.
+
+    Parameters
+    ----------
+    opcao_id : int
+    strike : float
+    vencimento : str
+        ISO date string.
+    quantidade : int
+    premio_unitario : float
+    observacao : str
+    """
+    sql = """
+        UPDATE opcoes
+           SET strike          = %s,
+               vencimento      = %s,
+               quantidade      = %s,
+               premio_unitario = %s,
+               premio_total    = %s,
+               observacao      = %s
+         WHERE id = %s
+    """
+    with _conn() as con:
+        with con.cursor() as cur:
+            cur.execute(sql, (
+                strike, vencimento, quantidade,
+                premio_unitario, premio_unitario * quantidade,
+                observacao, opcao_id,
+            ))
+    st.cache_data.clear()
+
+
 def fechar_opcao(opcao_id: int, status: str, data_fechamento: str) -> None:
     """Close an open option position.
 

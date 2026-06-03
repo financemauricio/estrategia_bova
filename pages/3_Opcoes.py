@@ -23,6 +23,37 @@ _CALL_MONTHS = "ABCDEFGHIJKL"   # Jan–Dez CALL
 _PUT_MONTHS  = "MNOPQRSTUVWX"   # Jan–Dez PUT
 _MONTH_NAMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 
+
+def _nª_sexta(ano: int, mes: int, n: int) -> datetime.date:
+    """Return the Nth Friday of a given month/year."""
+    primeiro = datetime.date(ano, mes, 1)
+    dias_ate_sexta = (4 - primeiro.weekday()) % 7  # 4 = Friday
+    primeira_sexta = primeiro + datetime.timedelta(days=dias_ate_sexta)
+    return primeira_sexta + datetime.timedelta(weeks=n - 1)
+
+
+def _sugerir_vencimento(mes_idx: int, semana: str) -> datetime.date:
+    """Suggest an expiry date based on month letter and optional week suffix.
+
+    Monthly options → 3rd Friday of the month.
+    Weekly options (W1–W4) → Nth Friday of the month.
+    Picks the nearest future occurrence.
+    """
+    hoje = datetime.date.today()
+    for delta_ano in range(2):
+        ano = hoje.year + delta_ano
+        try:
+            if semana:
+                n = int(semana[1])  # W1→1, W2→2, etc.
+                data = _nª_sexta(ano, mes_idx, n)
+            else:
+                data = _nª_sexta(ano, mes_idx, 3)
+            if data >= hoje:
+                return data
+        except (ValueError, OverflowError):
+            continue
+    return hoje + datetime.timedelta(days=30)
+
 _PREFIXO_ATIVO = {
     # ETFs
     "BOVA": "BOVA11",
@@ -332,10 +363,12 @@ _codigo_preview = st.text_input(
 
 _parsed = _parse_codigo(_codigo_preview) if _codigo_preview else {"ok": False}
 
+_venc_sugerido = datetime.date.today() + datetime.timedelta(days=30)
 if _codigo_preview and _parsed["ok"]:
+    _venc_sugerido = _sugerir_vencimento(_parsed["mes_idx"], _parsed["semana"])
     st.success(
         f"✅ **{_parsed['ativo']}** · **{_parsed['tipo']}** · "
-        f"vencimento em **{_parsed['mes_nome']}** "
+        f"vencimento sugerido **{_venc_sugerido.strftime('%d/%m/%Y')}** "
         + (f"· {_parsed['semana']}" if _parsed['semana'] else "")
     )
 elif _codigo_preview:
@@ -344,7 +377,7 @@ elif _codigo_preview:
 with st.form("form_opcao", clear_on_submit=True):
     fc1, fc2, fc3 = st.columns(3)
     strike_op  = fc1.number_input("Strike (R$)", min_value=1.0, step=0.50, format="%.2f", value=100.0)
-    venc_op    = fc2.date_input("Vencimento", value=datetime.date.today() + datetime.timedelta(days=30))
+    venc_op    = fc2.date_input("Vencimento", value=_venc_sugerido)
     qtd_op     = fc3.number_input("Quantidade", min_value=1, step=1)
 
     fc4, fc5 = st.columns([2, 1])
@@ -389,20 +422,66 @@ st.divider()
 st.subheader("Encerrar Posição")
 
 if abertas:
-    id_opcoes = {f"ID {op['id']} — {op['tipo']} {op['codigo_opcao'] or ''} Strike {op['strike']} Venc. {op['vencimento']}": op["id"] for op in abertas}
+    _label_op = {
+        f"{(op['codigo_opcao'] or '—').upper()} — {op['tipo']} Strike {op['strike']} Venc. {op['vencimento']}": op
+        for op in abertas
+    }
 
     with st.form("form_fechar", clear_on_submit=True):
-        opcao_sel = st.selectbox("Selecionar posição", list(id_opcoes.keys()))
+        opcao_sel_label = st.selectbox("Selecionar posição", list(_label_op.keys()))
         fc1, fc2 = st.columns(2)
         status_novo = fc1.selectbox("Novo status", ["EXERCIDA", "EXPIRADA", "ROLADA"])
         data_fech = fc2.date_input("Data de fechamento", value=datetime.date.today())
 
         if st.form_submit_button("Encerrar"):
-            banco.fechar_opcao(id_opcoes[opcao_sel], status_novo, str(data_fech))
+            banco.fechar_opcao(_label_op[opcao_sel_label]["id"], status_novo, str(data_fech))
             st.success("Posição encerrada.")
             st.rerun()
 else:
     st.caption("Nenhuma posição aberta para encerrar.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Edit open position
+# ---------------------------------------------------------------------------
+st.subheader("✏️ Editar Posição Aberta")
+
+if abertas:
+    _label_edit = {
+        f"{(op['codigo_opcao'] or '—').upper()} — {op['tipo']} Strike {op['strike']} Venc. {op['vencimento']}": op
+        for op in abertas
+    }
+    _sel_edit_label = st.selectbox("Selecionar posição para editar", list(_label_edit.keys()), key="sel_edit")
+    _op_edit = _label_edit[_sel_edit_label]
+
+    _venc_edit = _op_edit["vencimento"]
+    if isinstance(_venc_edit, str):
+        _venc_edit = datetime.date.fromisoformat(_venc_edit)
+
+    with st.form("form_editar", clear_on_submit=False):
+        e1, e2, e3 = st.columns(3)
+        strike_edit  = e1.number_input("Strike (R$)", value=float(_op_edit["strike"]), min_value=0.01, step=0.50, format="%.2f")
+        venc_edit    = e2.date_input("Vencimento", value=_venc_edit)
+        qtd_edit     = e3.number_input("Quantidade", value=int(_op_edit["quantidade"]), min_value=1, step=1)
+
+        e4, e5 = st.columns([2, 1])
+        premio_edit  = e4.number_input("Prêmio unitário (R$)", value=float(_op_edit["premio_unitario"]), min_value=0.0001, step=0.01, format="%.4f")
+        obs_edit     = e5.text_input("Observação", value=_op_edit.get("observacao") or "")
+
+        if st.form_submit_button("💾 Salvar alterações", use_container_width=True):
+            banco.editar_opcao(
+                opcao_id=_op_edit["id"],
+                strike=strike_edit,
+                vencimento=str(venc_edit),
+                quantidade=int(qtd_edit),
+                premio_unitario=premio_edit,
+                observacao=obs_edit,
+            )
+            st.success("✅ Posição atualizada.")
+            st.rerun()
+else:
+    st.caption("Nenhuma posição aberta para editar.")
 
 st.divider()
 
