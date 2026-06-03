@@ -209,6 +209,56 @@ def _prob_badge(prob: float | None) -> str:
         emoji = "🟢"
     return f"{emoji} {pct:.1f}%"
 
+
+def _preco_ativo(ativo: str) -> float | None:
+    """Return the current spot price of the underlying asset.
+
+    Parameters
+    ----------
+    ativo : str
+        Underlying asset ticker (e.g. 'BOVA11', 'PETR4').
+
+    Returns
+    -------
+    float or None
+        Current price in BRL, or None if unavailable.
+    """
+    d = _dados_mkt.get(ativo) or mercado.buscar_dados_ativo_opcao(ativo)
+    preco = d.get("preco")
+    return preco if preco and preco > 0 else None
+
+
+def _distancia_strike(tipo: str, preco_ativo: float, strike: float) -> str:
+    """Format the distance between spot price and strike as a signed percentage.
+
+    For PUT: positive = OTM (spot above strike), negative = ITM.
+    For CALL: positive = OTM (spot below strike), negative = ITM.
+
+    Parameters
+    ----------
+    tipo : str
+        'PUT' or 'CALL'.
+    preco_ativo : float
+        Current spot price.
+    strike : float
+        Option strike.
+
+    Returns
+    -------
+    str
+        Formatted string, e.g. '+4.2% OTM' or '-1.8% ITM'.
+    """
+    pct = (preco_ativo - strike) / strike * 100
+    if tipo == "PUT":
+        otm = pct >= 0
+        sinal = f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%"
+    else:  # CALL
+        otm = pct <= 0
+        sinal = f"{-pct:.1f}%" if pct <= 0 else f"-{-pct:.1f}%"
+        sinal = f"+{abs(pct):.1f}%" if pct <= 0 else f"-{abs(pct):.1f}%"
+    label = "OTM" if otm else "ITM"
+    return f"{sinal} {label}"
+
 abertas   = [o for o in todas if o["status"] == "ABERTA"]
 exercidas = [o for o in todas if o["status"] == "EXERCIDA"]
 expiradas = [o for o in todas if o["status"] in ("EXPIRADA", "ROLADA")]
@@ -307,10 +357,14 @@ if abertas:
         dias = (venc - hoje).days
         alerta = "⚠️" if dias <= 5 else ""
         prob = _prob_exercicio(op["tipo"], op["ativo"], op["strike"], dias)
+        spot = _preco_ativo(op["ativo"])
+        dist = _distancia_strike(op["tipo"], spot, op["strike"]) if spot else "—"
         rows.append(
             {
                 "Código": (op["codigo_opcao"] or "—").upper(),
                 "Strike": f"R$ {op['strike']:.2f}",
+                "Spot": f"R$ {spot:.2f}" if spot else "—",
+                "Distância": dist,
                 "Dias": f"{dias}{' ' + alerta if alerta else ''}",
                 "Qtd": op["quantidade"],
                 "Prêmio Total": f"R$ {op['premio_total']:.2f}",
