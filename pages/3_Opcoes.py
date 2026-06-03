@@ -174,14 +174,10 @@ if abertas:
         prob = _prob_exercicio(op["tipo"], op["ativo"], op["strike"], dias)
         rows.append(
             {
-                "ID": op["id"],
-                "Tipo": op["tipo"],
-                "Código": op["codigo_opcao"] or "—",
+                "Código": (op["codigo_opcao"] or "—").upper(),
                 "Strike": f"R$ {op['strike']:.2f}",
-                "Vencimento": str(venc),
-                "Dias": f"{dias} {alerta}",
+                "Dias": f"{dias}{' ' + alerta if alerta else ''}",
                 "Qtd": op["quantidade"],
-                "Prêmio Unit.": f"R$ {op['premio_unitario']:.4f}",
                 "Prêmio Total": f"R$ {op['premio_total']:.2f}",
                 "Prob. Exercício": _prob_badge(prob),
                 "Obs.": op["observacao"] or "",
@@ -226,7 +222,7 @@ with st.form("form_opcao", clear_on_submit=True):
             data_abertura=str(data_ab),
             tipo=tipo_op,
             ativo=ativo_op,
-            codigo_opcao=codigo_op,
+            codigo_opcao=codigo_op.upper(),
             strike=strike_op,
             vencimento=str(venc_op),
             quantidade=int(qtd_op),
