@@ -46,8 +46,8 @@ bova_hist: pd.DataFrame | None = dados.get("BOVA11", {}).get("hist")
 
 # Colours and dash styles per MA window
 _MA_STYLES: dict[int, dict] = {
-    25:  {"color": "#2ecc71", "dash": "solid",  "width": 2},
-    50:  {"color": "#f39c12", "dash": "dot",    "width": 2},
+    50:  {"color": "#2ecc71", "dash": "solid",  "width": 2},
+    100: {"color": "#f39c12", "dash": "dot",    "width": 2},
     200: {"color": "#e74c3c", "dash": "dashdot","width": 1},
 }
 
@@ -94,7 +94,8 @@ if bova_hist is not None and not bova_hist.empty:
         yaxis_title="R$",
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"★ MA{MA_PERIODO} é a média usada para decisão. MA50 e MA200 são referências visuais.")
+    _refs = [str(j) for j in MA_VISUALIZACAO if j != MA_PERIODO]
+    st.caption(f"★ MA{MA_PERIODO} é a média usada para decisão. MA{' e MA'.join(_refs)} são referências visuais.")
 else:
     st.warning("Histórico de BOVA11 indisponível.")
 
@@ -108,7 +109,7 @@ st.subheader("Checklist dos 5 Passos")
 p1 = passos["passo1"]
 p2 = passos["passo2"]
 p3 = passos["passo3"]
-ma_decisao_val = p1.get("ma200")
+ma_decisao_val = p1.get("ma_val")
 
 def _badge(ok: bool | None) -> str:
     if ok is True:
@@ -122,7 +123,7 @@ with st.container():
     st.markdown(f"### {_badge(p1['ok'])} Passo 1 — BOVA11 vs MA{MA_PERIODO}")
     if p1["ok"]:
         dist = p1.get("distancia_pct", 0)
-        ma_val = p1.get("ma200")
+        ma_val = p1.get("ma_val")
         st.write(
             f"Preço: **R$ {p1['preco']:.2f}** | MA{MA_PERIODO}: **R$ {ma_val:.2f}** | "
             f"Distância: **{dist*100:+.2f} %**"
@@ -258,10 +259,9 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("Opções Vencendo em Breve")
 
-abertas = banco.listar_opcoes("ABERTA")
 hoje = datetime.date.today()
 proximas = []
-for op in abertas:
+for op in opcoes_abertas:
     venc = op["vencimento"]
     if isinstance(venc, str):
         venc = datetime.date.fromisoformat(venc)

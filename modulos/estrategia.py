@@ -66,7 +66,7 @@ def avaliar_estrategia(
     patrimonio_total = total_etf + saldo_caixa
 
     # ------------------------------------------------------------------
-    # Step 1 — MA200 position
+    # Step 1 — price vs decision MA (MA_PERIODO)
     # ------------------------------------------------------------------
     if preco and ma200:
         acima_ma200 = preco > ma200
@@ -76,7 +76,7 @@ def avaliar_estrategia(
             "resultado": "ACIMA" if acima_ma200 else "ABAIXO",
             "vies": "CALL" if acima_ma200 else "PUT",
             "preco": preco,
-            "ma200": ma200,
+            "ma_val": ma200,
             "distancia_pct": distancia_pct,
         }
     else:
@@ -85,7 +85,7 @@ def avaliar_estrategia(
             "resultado": "Dados insuficientes",
             "vies": "INDEFINIDO",
             "preco": preco,
-            "ma200": ma200,
+            "ma_val": ma200,
             "distancia_pct": None,
         }
 
