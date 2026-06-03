@@ -242,6 +242,99 @@ def alertar_vencimentos(opcoes_vencidas: list[dict]) -> bool:
         return False
 
 
+def alertar_lembrete_sexta(opcoes_abertas: list[dict]) -> bool:
+    """Send a Friday reminder e-mail to prompt the user to visit the dashboard.
+
+    Parameters
+    ----------
+    opcoes_abertas : list[dict]
+        Open option positions — used to highlight any expiring within 7 days.
+
+    Returns
+    -------
+    bool
+        True if sent successfully, False otherwise.
+    """
+    cfg = _get_cfg()
+    if not cfg["remetente"] or not cfg["senha"]:
+        return False
+
+    hoje = datetime.date.today()
+    proximas = []
+    for op in opcoes_abertas:
+        venc = op.get("vencimento")
+        if isinstance(venc, str):
+            venc = datetime.date.fromisoformat(venc)
+        dias = (venc - hoje).days if venc else 999
+        if 0 <= dias <= 7:
+            proximas.append((op.get("codigo_opcao") or "—", dias, op.get("strike", 0)))
+
+    alerta_opcoes = ""
+    if proximas:
+        linhas = "".join(
+            f"<tr><td style='padding:6px;border-bottom:1px solid #333'>"
+            f"{cod.upper()}</td>"
+            f"<td style='padding:6px;border-bottom:1px solid #333;text-align:right'>"
+            f"R$ {strike:.2f}</td>"
+            f"<td style='padding:6px;border-bottom:1px solid #333;text-align:right;color:#e74c3c'>"
+            f"{dias}d ⚠️</td></tr>"
+            for cod, dias, strike in proximas
+        )
+        alerta_opcoes = f"""
+        <div style="background:#1e2a1e;border:1px solid #e74c3c;border-radius:6px;padding:16px;margin:16px 0">
+          <h3 style="color:#e74c3c;margin-top:0">⚠️ {len(proximas)} opção(ões) vencendo esta semana</h3>
+          <table style="width:100%;border-collapse:collapse">
+            <tr style="color:#888;font-size:0.85rem">
+              <th style="text-align:left;padding:6px">Código</th>
+              <th style="text-align:right;padding:6px">Strike</th>
+              <th style="text-align:right;padding:6px">Dias</th>
+            </tr>
+            {linhas}
+          </table>
+        </div>"""
+
+    html = f"""
+    <html><body style="font-family:sans-serif;background:#0e1117;color:#fafafa;padding:24px">
+      <div style="max-width:520px;margin:auto;background:#1a1d27;border-radius:8px;padding:24px">
+        <h2 style="margin-top:0;color:#fafafa">📅 Lembrete Semanal — {hoje.strftime('%d/%m/%Y')}</h2>
+        <p>É sexta-feira! Hora de revisar a estratégia e verificar oportunidades.</p>
+        {alerta_opcoes}
+        <div style="background:#2c3e50;padding:14px 20px;border-radius:6px;margin:16px 0">
+          <p style="margin:0;font-size:0.95rem">
+            📊 Acesse o <strong>Dashboard</strong> para ver o viés de mercado (MA50)<br>
+            📋 Revise a <strong>Análise Semanal</strong> para os 5 passos da decisão
+          </p>
+        </div>
+        <p style="color:#888;font-size:0.8rem;margin-top:16px">
+          Este lembrete é enviado toda sexta ao acessar o painel.
+        </p>
+      </div>
+    </body></html>
+    """
+
+    assunto = (
+        f"[ETF Estratégia] ⚠️ Lembrete — {len(proximas)} opção(ões) vencendo esta semana"
+        if proximas
+        else f"[ETF Estratégia] 📅 Lembrete semanal — {hoje.strftime('%d/%m')}"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = assunto
+    msg["From"] = cfg["remetente"]
+    msg["To"] = cfg["destinatario"]
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(cfg["host"], int(cfg["port"])) as server:
+            server.starttls(context=context)
+            server.login(cfg["remetente"], cfg["senha"])
+            server.sendmail(cfg["remetente"], cfg["destinatario"], msg.as_string())
+        return True
+    except Exception:
+        return False
+
+
 def verificar_e_alertar(dados_mercado: dict) -> str | None:
     """Check market data and send alert using progressive daily thresholds.
 

@@ -92,6 +92,17 @@ if _hoje.weekday() == 0 and not st.session_state.get(_session_key):
         st.session_state[_session_key] = True  # nenhuma vencida, não tentar novamente hoje
 
 # ---------------------------------------------------------------------------
+# Friday weekly reminder — send once per day
+# ---------------------------------------------------------------------------
+_key_sexta = f"lembrete_sexta_{_hoje.isoformat()}"
+
+if _hoje.weekday() == 4 and not st.session_state.get(_key_sexta):
+    _enviado_sexta = alertas.alertar_lembrete_sexta(opcoes_abertas)
+    st.session_state[_key_sexta] = True
+    if _enviado_sexta:
+        st.info("📧 Lembrete semanal enviado por email.")
+
+# ---------------------------------------------------------------------------
 # Top KPIs
 # ---------------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
