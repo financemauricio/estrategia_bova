@@ -10,6 +10,8 @@ import streamlit as st
 import math
 import re
 
+import plotly.graph_objects as go
+
 from modulos import banco, bs, mercado
 
 
@@ -245,7 +247,31 @@ if abertas:
                 "Obs.": op["observacao"] or "",
             }
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    df_abertas = pd.DataFrame(rows)
+    # Plotly table for full centering control
+    fig_tbl = go.Figure(go.Table(
+        header=dict(
+            values=[f"<b>{c}</b>" for c in df_abertas.columns],
+            fill_color="#1a1d27",
+            font=dict(color="white", size=13),
+            align="center",
+            line_color="#333",
+        ),
+        cells=dict(
+            values=[df_abertas[c].tolist() for c in df_abertas.columns],
+            fill_color="#0e1117",
+            font=dict(color="white", size=12),
+            align="center",
+            line_color="#222",
+            height=32,
+        ),
+    ))
+    fig_tbl.update_layout(
+        margin=dict(t=0, b=0, l=0, r=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=60 + len(rows) * 36,
+    )
+    st.plotly_chart(fig_tbl, use_container_width=True)
     st.caption("🟢 < 25 %  🟡 25–50 %  🔴 > 50 % — probabilidade calculada via Black-Scholes com vol. histórica 20d.")
 else:
     st.info("Nenhuma posição aberta.")
