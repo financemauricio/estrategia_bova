@@ -16,7 +16,7 @@ from config import (
     MA_PERIODO,
     MA_VISUALIZACAO,
 )
-from modulos import banco, estrategia, mercado
+from modulos import banco, bs, estrategia, mercado
 
 st.title("📅 Análise Semanal")
 st.caption("Use esta tela todo final de semana para revisar a estratégia.")
@@ -179,12 +179,57 @@ with st.container():
 st.divider()
 
 with st.container():
-    st.markdown(f"### 🟡 Passo 4 — Prêmio Atrativo")
-    st.info(
-        "Confirme no Home Broker: o prêmio oferecido justifica o risco? "
-        "Evite vender em dias de baixa volatilidade implícita."
-    )
-    premium_ok = st.checkbox("Sim, o prêmio está atrativo")
+    st.markdown("### 🟡 Passo 4 — Prêmio Atrativo (Black-Scholes)")
+
+    bova_preco = p1.get("preco") or 0.0
+    bova_hist_bs: pd.DataFrame | None = dados.get("BOVA11", {}).get("hist")
+    vies_bs = resultado.get("vies", "INDEFINIDO")
+
+    selic = bs.buscar_selic()
+
+    vol_ok = False
+    vol = None
+    if bova_hist_bs is not None and len(bova_hist_bs) >= 20:
+        try:
+            vol = bs.calcular_vol_historica(bova_hist_bs, janela=20)
+            vol_ok = True
+        except Exception:
+            pass
+
+    bs_c1, bs_c2, bs_c3 = st.columns(3)
+    bs_c1.metric("Volatilidade Histórica (20d)", f"{vol * 100:.1f} % a.a." if vol else "—")
+    bs_c2.metric("Selic (a.a.)", f"{selic * 100:.2f} %")
+
+    dias_venc = st.slider("Dias até o vencimento", min_value=7, max_value=60, value=30, step=1)
+    T = dias_venc / 252
+
+    if vol_ok and bova_preco > 0:
+        if vies_bs == "PUT":
+            strike_put = round(bova_preco, 2)
+            premio_teo = bs.preco_put_bs(bova_preco, strike_put, T, selic, vol)
+            bs_c3.metric("Prêmio teórico PUT ATM", f"R$ {premio_teo:.4f}")
+            st.info(
+                f"**Referência Black-Scholes:** PUT ATM (strike R$ {strike_put:.2f}, "
+                f"{dias_venc} dias) vale teoricamente **R$ {premio_teo:.4f}** por cota. "
+                "Venda apenas se o prêmio de mercado estiver **acima desse valor**."
+            )
+        elif vies_bs == "CALL":
+            from config import CALL_STRIKE_OTM_PCT
+            strike_call = round(bova_preco * (1 + CALL_STRIKE_OTM_PCT), 2)
+            premio_teo = bs.preco_call_bs(bova_preco, strike_call, T, selic, vol)
+            bs_c3.metric(f"Prêmio teórico CALL +3% OTM", f"R$ {premio_teo:.4f}")
+            st.info(
+                f"**Referência Black-Scholes:** CALL OTM (strike R$ {strike_call:.2f}, "
+                f"{dias_venc} dias) vale teoricamente **R$ {premio_teo:.4f}** por cota. "
+                "Venda apenas se o prêmio de mercado estiver **acima desse valor**."
+            )
+        else:
+            bs_c3.metric("Prêmio teórico", "—")
+    else:
+        bs_c3.metric("Prêmio teórico", "—")
+        st.warning("Dados insuficientes para calcular o preço teórico.")
+
+    premium_ok = st.checkbox("✅ O prêmio de mercado está acima do teórico — confirmo a operação")
 
 st.divider()
 
@@ -193,7 +238,7 @@ with st.container():
     if not premium_ok:
         st.warning("Confirme o prêmio no Passo 4 antes de prosseguir.")
     elif rec == "PUT_ATM":
-        st.error(
+        st.success(
             "**VENDER PUT ATM** com vencimento mensal. "
             "Aceitar exercício se houver. Rolar apenas se melhorar strike e prêmio."
         )
