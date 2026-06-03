@@ -243,7 +243,12 @@ def alertar_vencimentos(opcoes_vencidas: list[dict]) -> bool:
 
 
 def verificar_e_alertar(dados_mercado: dict) -> str | None:
-    """Check market data and send alert if thresholds are breached.
+    """Check market data and send alert using progressive daily thresholds.
+
+    Each alert sent on the same day raises the threshold by 0.5 pp so that
+    emails are only sent for increasingly significant moves (spam prevention).
+
+    Thresholds reset automatically at midnight (keyed by today's date).
 
     Parameters
     ----------
@@ -257,15 +262,38 @@ def verificar_e_alertar(dados_mercado: dict) -> str | None:
     """
     from config import LIMIAR_QUEDA_PUT, LIMIAR_ALTA_CALL
 
-    bova = dados_mercado.get("BOVA11", {})
-    variacao = bova.get("variacao_pct", 0.0)
-    preco = bova.get("preco", 0.0)
-    ma200 = bova.get("ma200")
+    _STEP = 0.005  # 0.5 pp increment per email
 
-    if variacao <= LIMIAR_QUEDA_PUT:
-        enviar_alerta("PUT", variacao, preco, ma200)
+    hoje = datetime.date.today().isoformat()
+    key_put  = f"alerta_put_limiar_{hoje}"
+    key_call = f"alerta_call_limiar_{hoje}"
+
+    # Initialise today's thresholds on first call of the day
+    if key_put  not in st.session_state:
+        st.session_state[key_put]  = LIMIAR_QUEDA_PUT   # e.g. -0.015
+    if key_call not in st.session_state:
+        st.session_state[key_call] = LIMIAR_ALTA_CALL   # e.g.  0.020
+
+    limiar_put  = st.session_state[key_put]
+    limiar_call = st.session_state[key_call]
+
+    bova     = dados_mercado.get("BOVA11", {})
+    variacao = bova.get("variacao_pct", 0.0)
+    preco    = bova.get("preco", 0.0)
+    ma200    = bova.get("ma_decisao")
+
+    if variacao <= limiar_put:
+        enviado = enviar_alerta("PUT", variacao, preco, ma200)
+        if enviado:
+            # Tighten: next PUT alert only on an additional -0.5% move
+            st.session_state[key_put] = limiar_put - _STEP
         return "PUT"
-    if variacao >= LIMIAR_ALTA_CALL:
-        enviar_alerta("CALL", variacao, preco, ma200)
+
+    if variacao >= limiar_call:
+        enviado = enviar_alerta("CALL", variacao, preco, ma200)
+        if enviado:
+            # Tighten: next CALL alert only on an additional +0.5% move
+            st.session_state[key_call] = limiar_call + _STEP
         return "CALL"
+
     return None
