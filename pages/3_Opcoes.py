@@ -8,10 +8,72 @@ import pandas as pd
 import streamlit as st
 
 import math
+import re
 
 from modulos import banco, bs, mercado
 
+
+# ---------------------------------------------------------------------------
+# B3 option code parser
+# ---------------------------------------------------------------------------
+
+_CALL_MONTHS = "ABCDEFGHIJKL"   # Jan–Dez CALL
+_PUT_MONTHS  = "MNOPQRSTUVWX"   # Jan–Dez PUT
+_MONTH_NAMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+
+_PREFIXO_ATIVO = {
+    "BOVA": "BOVA11",
+    "HASH": "HASH11",
+}
+
+def _parse_codigo(codigo: str) -> dict:
+    """Parse a B3 option code and return extracted fields.
+
+    Parameters
+    ----------
+    codigo : str
+        e.g. 'BOVAR169', 'BOVAR164W1', 'HASHQ50'
+
+    Returns
+    -------
+    dict with keys: ativo, tipo, mes_idx (1-12), strike_raw, semana, ok
+    """
+    codigo = codigo.upper().strip()
+    m = re.match(r'^([A-Z]{4})([A-Z])(\d+)(W\d)?$', codigo)
+    if not m:
+        return {"ok": False}
+
+    prefixo, letra_mes, strike_str, semana = m.groups()
+    ativo = _PREFIXO_ATIVO.get(prefixo, prefixo)
+
+    if letra_mes in _CALL_MONTHS:
+        tipo = "CALL"
+        mes_idx = _CALL_MONTHS.index(letra_mes) + 1
+    elif letra_mes in _PUT_MONTHS:
+        tipo = "PUT"
+        mes_idx = _PUT_MONTHS.index(letra_mes) + 1
+    else:
+        return {"ok": False}
+
+    return {
+        "ok": True,
+        "ativo": ativo,
+        "tipo": tipo,
+        "mes_idx": mes_idx,
+        "mes_nome": _MONTH_NAMES[mes_idx - 1],
+        "strike_raw": strike_str,
+        "semana": semana or "",
+    }
+
 st.title("📋 Opções")
+
+st.markdown("""
+<style>
+[data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
+    text-align: center !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Single-fetch: all options + cash balance (2 DB round-trips total)
@@ -195,42 +257,63 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("Registrar Venda de Opção")
 
-with st.form("form_opcao", clear_on_submit=True):
-    r1c1, r1c2, r1c3 = st.columns(3)
-    data_ab = r1c1.date_input("Data de abertura", value=datetime.date.today())
-    tipo_op = r1c2.selectbox("Tipo", ["PUT", "CALL"])
-    ativo_op = r1c3.selectbox("Ativo subjacente", ["BOVA11", "HASH11"])
+# Live parse feedback outside the form (reacts on every keystroke)
+_codigo_preview = st.text_input(
+    "Código da opção",
+    placeholder="ex: BOVAR169 ou BOVAR164W1",
+    key="codigo_input",
+).upper().strip()
 
-    r2c1, r2c2, r2c3 = st.columns(3)
-    codigo_op = r2c1.text_input("Código da opção", placeholder="ex: BOVAJ24")
-    strike_op = r2c2.number_input("Strike (R$)", min_value=0.01, step=0.50, format="%.2f")
-    venc_op = r2c3.date_input(
-        "Vencimento",
-        value=datetime.date.today() + datetime.timedelta(days=30),
+_parsed = _parse_codigo(_codigo_preview) if _codigo_preview else {"ok": False}
+
+if _codigo_preview and _parsed["ok"]:
+    st.success(
+        f"✅ **{_parsed['ativo']}** · **{_parsed['tipo']}** · "
+        f"vencimento em **{_parsed['mes_nome']}** "
+        + (f"· {_parsed['semana']}" if _parsed['semana'] else "")
     )
+elif _codigo_preview:
+    st.warning("⚠️ Código não reconhecido — verifique a nomenclatura B3.")
 
-    r3c1, r3c2, r3c3 = st.columns(3)
-    qtd_op = r3c1.number_input("Quantidade (contratos)", min_value=1, step=1)
-    premio_op = r3c2.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f")
-    obs_op = r3c3.text_input("Observação")
+with st.form("form_opcao", clear_on_submit=True):
+    fc1, fc2, fc3 = st.columns(3)
+    strike_op  = fc1.number_input("Strike (R$)", min_value=1.0, step=0.50, format="%.2f", value=100.0)
+    venc_op    = fc2.date_input("Vencimento", value=datetime.date.today() + datetime.timedelta(days=30))
+    qtd_op     = fc3.number_input("Quantidade", min_value=1, step=1)
+
+    fc4, fc5 = st.columns([2, 1])
+    premio_op = fc4.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f")
+    obs_op    = fc5.text_input("Observação")
 
     total_preview = qtd_op * premio_op
-    st.caption(f"Prêmio total a receber: **R$ {total_preview:,.2f}**")
+    reserva_caixa = strike_op * qtd_op if (_parsed.get("tipo") == "PUT") else 0.0
 
-    if st.form_submit_button("Registrar venda"):
-        banco.inserir_opcao(
-            data_abertura=str(data_ab),
-            tipo=tipo_op,
-            ativo=ativo_op,
-            codigo_opcao=codigo_op.upper(),
-            strike=strike_op,
-            vencimento=str(venc_op),
-            quantidade=int(qtd_op),
-            premio_unitario=premio_op,
-            observacao=obs_op,
-        )
-        st.success(f"Venda de {tipo_op} registrada. Prêmio total: R$ {total_preview:,.2f}")
-        st.rerun()
+    st.markdown(
+        f"💰 **Prêmio total:** R$ {total_preview:,.2f}"
+        + (f"  |  🔒 **Reserva de caixa:** R$ {reserva_caixa:,.2f}" if reserva_caixa else "")
+    )
+
+    submitted = st.form_submit_button("✅ Registrar venda", use_container_width=True)
+    if submitted:
+        if not _parsed["ok"]:
+            st.error("Informe um código de opção válido antes de registrar.")
+        else:
+            banco.inserir_opcao(
+                data_abertura=str(datetime.date.today()),
+                tipo=_parsed["tipo"],
+                ativo=_parsed["ativo"],
+                codigo_opcao=_codigo_preview,
+                strike=strike_op,
+                vencimento=str(venc_op),
+                quantidade=int(qtd_op),
+                premio_unitario=premio_op,
+                observacao=obs_op,
+            )
+            st.success(
+                f"✅ {_parsed['tipo']} **{_codigo_preview}** registrada — "
+                f"prêmio R$ {total_preview:,.2f}"
+            )
+            st.rerun()
 
 st.divider()
 
