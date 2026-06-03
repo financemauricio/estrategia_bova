@@ -137,6 +137,46 @@ def buscar_dados_mercado() -> dict[str, dict]:
     return resultado
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL_SECONDS, show_spinner=False)
+def buscar_dados_ativo_opcao(ticker_b3: str) -> dict:
+    """Fetch price and recent history for any B3 stock used as option underlying.
+
+    Tries ``{ticker_b3}.SA`` first; falls back to appending common suffixes
+    (3, 4, 11) if the ticker is a bare 4-letter prefix.
+
+    Parameters
+    ----------
+    ticker_b3 : str
+        Ticker as stored in the options table, e.g. 'PETR4', 'BOVA11'.
+
+    Returns
+    -------
+    dict
+        - preco : float | None
+        - hist  : pd.DataFrame | None
+    """
+    candidatos = [f"{ticker_b3}.SA"]
+    if not any(ticker_b3.endswith(s) for s in ("3", "4", "11")):
+        candidatos += [f"{ticker_b3}3.SA", f"{ticker_b3}4.SA", f"{ticker_b3}11.SA"]
+
+    for sa in candidatos:
+        try:
+            hist = yf.Ticker(sa).history(period="120d")
+        except Exception:
+            continue
+        if hist.empty or len(hist) < 21:
+            continue
+        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        for col_ohlc in ["Open", "High", "Low", "Close"]:
+            if col_ohlc in hist.columns:
+                hist = hist[hist[col_ohlc] > 0]
+        if len(hist) < 21:
+            continue
+        return {"preco": float(hist["Close"].iloc[-1]), "hist": hist}
+
+    return {"preco": None, "hist": None}
+
+
 def variacao_fmt(variacao_pct: float) -> str:
     """Format a fractional return for display.
 

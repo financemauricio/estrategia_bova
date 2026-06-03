@@ -24,8 +24,46 @@ _PUT_MONTHS  = "MNOPQRSTUVWX"   # Jan–Dez PUT
 _MONTH_NAMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 
 _PREFIXO_ATIVO = {
+    # ETFs
     "BOVA": "BOVA11",
     "HASH": "HASH11",
+    "SMAL": "SMAL11",
+    "IVVB": "IVVB11",
+    # Commodities / energia
+    "PETR": "PETR4",
+    "VALE": "VALE3",
+    "PRIO": "PRIO3",
+    "RECV": "RECV3",
+    # Bancos
+    "ITUB": "ITUB4",
+    "BBDC": "BBDC4",
+    "BBAS": "BBAS3",
+    "SANB": "SANB11",
+    # Consumo / varejo
+    "ABEV": "ABEV3",
+    "LREN": "LREN3",
+    "MGLU": "MGLU3",
+    # Industria / tech
+    "WEGE": "WEGE3",
+    "EMBR": "EMBR3",
+    "TOTS": "TOTS3",
+    "INTB": "INTB3",
+    # Utilities
+    "EQTL": "EQTL3",
+    "ELET": "ELET3",
+    "CPFE": "CPFE3",
+    # Telecom
+    "VIVT": "VIVT3",
+    # Papel / celulose
+    "SUZB": "SUZB3",
+    "KLBN": "KLBN11",
+    # Saúde
+    "RADL": "RADL3",
+    "HAPV": "HAPV3",
+    # Outros
+    "RENT": "RENT3",
+    "GOLL": "GOLL4",
+    "AZUL": "AZUL4",
 }
 
 def _parse_codigo(codigo: str) -> dict:
@@ -90,12 +128,15 @@ _selic = bs.buscar_selic()
 def _prob_exercicio(tipo: str, ativo: str, strike: float, dias: int) -> float | None:
     """Return probability of exercise [0, 1] using Black-Scholes N(±d2).
 
+    Works for any B3 stock — portfolio assets use the cached market data,
+    others are fetched on demand via ``mercado.buscar_dados_ativo_opcao``.
+
     Parameters
     ----------
     tipo : str
         'PUT' or 'CALL'.
     ativo : str
-        Underlying asset name, e.g. 'BOVA11'.
+        Underlying asset name, e.g. 'PETR4', 'BOVA11'.
     strike : float
         Option strike price.
     dias : int
@@ -106,8 +147,9 @@ def _prob_exercicio(tipo: str, ativo: str, strike: float, dias: int) -> float | 
     float or None
         Probability in [0, 1], or None if data is unavailable.
     """
-    d = _dados_mkt.get(ativo, {})
-    hist = d.get("hist")
+    # Use portfolio cache first; fall back to on-demand fetch
+    d = _dados_mkt.get(ativo) or mercado.buscar_dados_ativo_opcao(ativo)
+    hist  = d.get("hist")
     preco = d.get("preco")
     if hist is None or preco is None or preco <= 0 or dias <= 0:
         return None
@@ -116,12 +158,10 @@ def _prob_exercicio(tipo: str, ativo: str, strike: float, dias: int) -> float | 
     except Exception:
         return None
     T = max(dias, 1) / 252
-    r = _selic
-    if sigma <= 0 or T <= 0:
+    if sigma <= 0:
         return None
-    d1_num = math.log(preco / strike) + (r + 0.5 * sigma ** 2) * T
+    d1_num = math.log(preco / strike) + (_selic + 0.5 * sigma ** 2) * T
     d2 = (d1_num / (sigma * math.sqrt(T))) - sigma * math.sqrt(T)
-    # N(d2) = prob CALL exercised; N(-d2) = prob PUT exercised
     norm_d2 = (1.0 + math.erf(d2 / math.sqrt(2.0))) / 2.0
     return (1 - norm_d2) if tipo == "PUT" else norm_d2
 

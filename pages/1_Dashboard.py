@@ -282,9 +282,9 @@ else:
         dias = (venc - hoje).days
 
         # Probability of exercise
-        d_mkt = dados.get(op["ativo"], {})
+        d_mkt = dados.get(op["ativo"]) or mercado.buscar_dados_ativo_opcao(op["ativo"])
         hist_op = d_mkt.get("hist")
-        preco_op = d_mkt.get("preco", 0.0)
+        preco_op = d_mkt.get("preco") or 0.0
         prob = None
         if hist_op is not None and preco_op > 0 and dias > 0:
             try:
