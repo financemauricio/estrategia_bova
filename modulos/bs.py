@@ -32,7 +32,7 @@ def buscar_selic() -> float:
     import requests  # available via yfinance's dependency chain
 
     url = (
-        "https://api.bcb.gov.br/dados/serie/bcdata.sgs.11"
+        "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432"
         "/dados/ultimos/1?formato=json"
     )
     try:
