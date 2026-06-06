@@ -21,11 +21,9 @@ from config import (
     MA_VISUALIZACAO,
     REFRESH_INTERVAL_SECONDS,
 )
-import math
-
 import plotly.graph_objects as go
 
-from modulos import alertas, banco, bs, estrategia, mercado
+from modulos import alertas, banco, estrategia, mercado
 
 # ---------------------------------------------------------------------------
 # Auto-refresh every REFRESH_INTERVAL_SECONDS milliseconds
@@ -258,138 +256,7 @@ st.caption(
     f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — {time.strftime('%d/%m/%Y %H:%M')}."
 )
 
-st.divider()
-
-# ---------------------------------------------------------------------------
-# Options portfolio overview
-# ---------------------------------------------------------------------------
-st.subheader("📋 Carteira de Opções — Planejamento de Caixa")
-
-if not opcoes_abertas:
-    st.info("Nenhuma opção aberta.")
-else:
-    import datetime as _dt
-
-    _selic = bs.buscar_selic()
-    hoje = _dt.date.today()
-
-    # Build enriched rows
-    _op_rows = []
-    for op in opcoes_abertas:
-        venc = op["vencimento"]
-        if isinstance(venc, str):
-            venc = _dt.date.fromisoformat(venc)
-        dias = (venc - hoje).days
-
-        # Probability of exercise
-        d_mkt = dados.get(op["ativo"]) or mercado.buscar_dados_ativo_opcao(op["ativo"])
-        hist_op = d_mkt.get("hist")
-        preco_op = d_mkt.get("preco") or 0.0
-        prob = None
-        if hist_op is not None and preco_op > 0 and dias > 0:
-            try:
-                sigma = bs.calcular_vol_historica(hist_op, janela=20)
-                T = max(dias, 1) / 252
-                d1n = math.log(preco_op / op["strike"]) + (_selic + 0.5 * sigma**2) * T
-                d2 = d1n / (sigma * math.sqrt(T)) - sigma * math.sqrt(T)
-                nd2 = (1.0 + math.erf(d2 / math.sqrt(2.0))) / 2.0
-                prob = (1 - nd2) if op["tipo"] == "PUT" else nd2
-            except Exception:
-                pass
-
-        reserva = op["strike"] * op["quantidade"]
-        prob_pct = prob * 100 if prob is not None else 0.0
-        cor = "#e74c3c" if prob_pct >= 50 else ("#f39c12" if prob_pct >= 25 else "#2ecc71")
-
-        _op_rows.append({
-            "codigo": (op["codigo_opcao"] or "—").upper(),
-            "tipo": op["tipo"],
-            "vencimento": venc,
-            "dias": dias,
-            "strike": op["strike"],
-            "qtd": op["quantidade"],
-            "reserva": reserva,
-            "prob": prob_pct,
-            "cor": cor,
-        })
-
-    # Sort by expiry
-    _op_rows.sort(key=lambda x: x["vencimento"])
-
-    # KPI strip
-    total_reserva = sum(r["reserva"] for r in _op_rows)
-    op_k1, op_k2, op_k3 = st.columns(3)
-    op_k1.metric("Opções abertas", len(_op_rows))
-    op_k2.metric("Reserva total necessária", f"R$ {total_reserva:,.2f}",
-                 help="Σ strike × quantidade de todas as opções abertas")
-    caixa_cobre = "✅ Cobre" if saldo >= total_reserva else "🚨 Insuficiente"
-    op_k3.metric("Caixa vs. Reserva", caixa_cobre,
-                 delta=f"R$ {saldo - total_reserva:+,.2f}")
-
-    # Bar chart: cash at risk per expiry, colored by probability
-    fig_op = go.Figure()
-    for row in _op_rows:
-        fig_op.add_trace(go.Bar(
-            x=[str(row["vencimento"])],
-            y=[row["reserva"]],
-            name=row["codigo"],
-            marker_color=row["cor"],
-            text=f"{row['codigo']}<br>Prob: {row['prob']:.1f}%<br>R$ {row['reserva']:,.0f}",
-            hoverinfo="text",
-        ))
-
-    fig_op.update_layout(
-        barmode="stack",
-        xaxis_title="Vencimento",
-        yaxis_title="Reserva de caixa (R$)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        height=280,
-        margin=dict(t=10, b=10),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        yaxis=dict(tickformat=",.0f", tickprefix="R$ "),
-    )
-    # Reference line: available cash
-    fig_op.add_hline(
-        y=saldo, line_dash="dash", line_color="#3498db",
-        annotation_text=f"Caixa disponível R$ {saldo:,.0f}",
-        annotation_position="top left",
-    )
-    st.plotly_chart(fig_op, use_container_width=True)
-
-    # Detail table
-    tbl_cols  = ["Código", "Tipo", "Vencimento", "Dias", "Strike", "Qtd", "Reserva (R$)", "Prob. Exercício"]
-    tbl_vals  = [
-        [r["codigo"]              for r in _op_rows],
-        [r["tipo"]                for r in _op_rows],
-        [str(r["vencimento"])     for r in _op_rows],
-        [str(r["dias"])           for r in _op_rows],
-        [f"R$ {r['strike']:.2f}" for r in _op_rows],
-        [str(r["qtd"])            for r in _op_rows],
-        [f"R$ {r['reserva']:,.2f}" for r in _op_rows],
-        [f"{r['prob']:.1f}%"     for r in _op_rows],
-    ]
-    cell_colors = [["#0e1117"] * len(_op_rows)] * (len(tbl_cols) - 1) + \
-                  [[r["cor"]   for r in _op_rows]]
-
-    fig_tbl = go.Figure(go.Table(
-        header=dict(
-            values=[f"<b>{c}</b>" for c in tbl_cols],
-            fill_color="#1a1d27", font=dict(color="white", size=12),
-            align="center", line_color="#333",
-        ),
-        cells=dict(
-            values=tbl_vals,
-            fill_color=cell_colors,
-            font=dict(color="white", size=12),
-            align="center", line_color="#222", height=30,
-        ),
-    ))
-    fig_tbl.update_layout(
-        margin=dict(t=0, b=0, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        height=55 + len(_op_rows) * 34,
-    )
-    st.plotly_chart(fig_tbl, use_container_width=True)
-    st.caption("🟢 < 25%  🟡 25–50%  🔴 > 50% probabilidade de exercício (Black-Scholes, vol. histórica 20d)")
+st.caption(
+    f"Decisão baseada na MA{MA_PERIODO}. Referências visuais: MA{', MA'.join(str(j) for j in MA_VISUALIZACAO)}. "
+    f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — acesse **Carteira** para gerir posições."
+)
