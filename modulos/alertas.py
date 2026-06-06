@@ -14,6 +14,8 @@ from email.mime.text import MIMEText
 
 import streamlit as st
 
+from modulos import mercado as _mercado_mod  # noqa: E402 — same package, no circular dep
+
 
 def _get_cfg() -> dict[str, str]:
     """Return e-mail config from secrets or environment variables."""
@@ -380,7 +382,6 @@ def alertar_oportunidade_recompra(
         True if at least one alert email was sent.
     """
     from config import LIMIAR_RECOMPRA_PCT
-    from modulos import mercado as _mercado
 
     cfg = _get_cfg()
     if not cfg["remetente"] or not cfg["senha"]:
@@ -406,7 +407,7 @@ def alertar_oportunidade_recompra(
             spot     = d.get("preco", 0.0)
         else:
             # Arbitrary underlying — compute from history
-            d_op = _mercado.buscar_dados_ativo_opcao(ativo)
+            d_op = _mercado_mod.buscar_dados_ativo_opcao(ativo)
             hist = d_op.get("hist")
             spot = d_op.get("preco") or 0.0
             if hist is not None and len(hist) >= 2:
