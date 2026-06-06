@@ -19,25 +19,39 @@ def _get_cfg() -> dict[str, str]:
     """Return e-mail config from secrets or environment variables."""
     try:
         return {
-            "remetente": st.secrets["EMAIL_REMETENTE"],
-            "senha": st.secrets["EMAIL_SENHA"],
+            "remetente":    st.secrets["EMAIL_REMETENTE"],
+            "senha":        st.secrets["EMAIL_SENHA"],
             "destinatario": st.secrets["EMAIL_DESTINATARIO"],
-            "host": st.secrets["SMTP_HOST"],
-            "port": st.secrets["SMTP_PORT"],
+            "host":         st.secrets["SMTP_HOST"],
+            "port":         st.secrets["SMTP_PORT"],
+            "app_url":      st.secrets.get("APP_URL", ""),
         }
     except Exception:
         from dotenv import load_dotenv
         load_dotenv()
         return {
-            "remetente": os.getenv("EMAIL_REMETENTE", ""),
-            "senha": os.getenv("EMAIL_SENHA", ""),
+            "remetente":    os.getenv("EMAIL_REMETENTE", ""),
+            "senha":        os.getenv("EMAIL_SENHA", ""),
             "destinatario": os.getenv("EMAIL_DESTINATARIO", ""),
-            "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
-            "port": os.getenv("SMTP_PORT", "587"),
+            "host":         os.getenv("SMTP_HOST", "smtp.gmail.com"),
+            "port":         os.getenv("SMTP_PORT", "587"),
+            "app_url":      os.getenv("APP_URL", ""),
         }
 
 
-def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | None) -> str:
+def _botao_link(url: str, texto: str = "🚀 Acessar o painel agora") -> str:
+    """Return an HTML button linking to the app, or empty string if no URL."""
+    if not url:
+        return ""
+    return f"""
+    <div style="text-align:center;margin:20px 0">
+      <a href="{url}" style="background:#3498db;color:#fff;padding:12px 28px;
+         border-radius:6px;text-decoration:none;font-weight:bold;font-size:1rem;
+         display:inline-block">{texto}</a>
+    </div>"""
+
+
+def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | None, app_url: str = "") -> str:
     cor = "#e74c3c" if tipo == "PUT" else "#2ecc71"
     acao = "VENDER PUT ATM" if tipo == "PUT" else "VENDER CALL 3% OTM"
     motivo = (
@@ -64,6 +78,7 @@ def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | 
                     text-align:center;font-weight:bold;font-size:1.1rem">
           {acao}
         </div>
+        {_botao_link(app_url)}
         <p style="color:#888;font-size:0.85rem;margin-top:16px">
           Verifique liquidez e prêmio no Home Broker antes de operar.
         </p>
@@ -102,7 +117,7 @@ def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | N
     msg["Subject"] = assunto
     msg["From"] = cfg["remetente"]
     msg["To"] = cfg["destinatario"]
-    msg.attach(MIMEText(_html_template(tipo, variacao_pct, preco, ma200), "html"))
+    msg.attach(MIMEText(_html_template(tipo, variacao_pct, preco, ma200, cfg["app_url"]), "html"))
 
     try:
         context = ssl.create_default_context()
@@ -115,8 +130,9 @@ def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | N
         return False
 
 
-def _html_vencimentos(opcoes: list[dict]) -> str:
+def _html_vencimentos(opcoes: list[dict], app_url: str = "") -> str:
     """Build HTML email body for expiry summary."""
+    _app_url_venc = app_url
     hoje = datetime.date.today()
     exercidas = [o for o in opcoes if o["status"] == "EXERCIDA"]
     outras = [o for o in opcoes if o["status"] != "EXERCIDA"]
@@ -193,6 +209,7 @@ def _html_vencimentos(opcoes: list[dict]) -> str:
         <p style="color:#888;font-size:0.8rem;margin-top:20px">
           Atualize o status das posições no painel de Opções.
         </p>
+        {_botao_link(_app_url_venc, "📋 Acessar Carteira")}
       </div>
     </body></html>
     """
@@ -229,7 +246,7 @@ def alertar_vencimentos(opcoes_vencidas: list[dict]) -> bool:
     msg["Subject"] = assunto
     msg["From"] = cfg["remetente"]
     msg["To"] = cfg["destinatario"]
-    msg.attach(MIMEText(_html_vencimentos(opcoes_vencidas), "html"))
+    msg.attach(MIMEText(_html_vencimentos(opcoes_vencidas, cfg["app_url"]), "html"))
 
     try:
         context = ssl.create_default_context()
@@ -302,9 +319,10 @@ def alertar_lembrete_sexta(opcoes_abertas: list[dict]) -> bool:
         <div style="background:#2c3e50;padding:14px 20px;border-radius:6px;margin:16px 0">
           <p style="margin:0;font-size:0.95rem">
             📊 Acesse o <strong>Dashboard</strong> para ver o viés de mercado (MA50)<br>
-            📋 Revise a <strong>Análise Semanal</strong> para os 5 passos da decisão
+            📋 Revise a <strong>Carteira</strong> para gerir posições em opções
           </p>
         </div>
+        {_botao_link(cfg["app_url"])}
         <p style="color:#888;font-size:0.8rem;margin-top:16px">
           Este lembrete é enviado toda sexta ao acessar o painel.
         </p>
