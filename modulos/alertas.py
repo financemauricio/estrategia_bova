@@ -353,6 +353,165 @@ def alertar_lembrete_sexta(opcoes_abertas: list[dict]) -> bool:
         return False
 
 
+def alertar_oportunidade_recompra(
+    opcoes_abertas: list[dict],
+    dados_mkt: dict,
+) -> bool:
+    """Send a buyback-opportunity alert when the underlying moves favorably.
+
+    For a sold PUT: underlying rises >= LIMIAR_RECOMPRA_PCT → PUT lost value,
+    good moment to close the position with profit.
+    For a sold CALL: underlying falls >= LIMIAR_RECOMPRA_PCT → CALL lost value,
+    same logic.
+
+    A session_state guard (keyed by option id + date) prevents repeat emails
+    for the same position on the same day.
+
+    Parameters
+    ----------
+    opcoes_abertas : list[dict]
+        Open option records from ``banco.listar_opcoes('ABERTA')``.
+    dados_mkt : dict
+        Output from ``mercado.buscar_dados_mercado()`` — covers the main ETFs.
+
+    Returns
+    -------
+    bool
+        True if at least one alert email was sent.
+    """
+    from config import LIMIAR_RECOMPRA_PCT
+    from modulos import mercado as _mercado
+
+    cfg = _get_cfg()
+    if not cfg["remetente"] or not cfg["senha"]:
+        return False
+
+    hoje = datetime.date.today()
+    disparadas: list[dict] = []
+
+    for op in opcoes_abertas:
+        op_id   = op["id"]
+        ativo   = op["ativo"]
+        tipo    = op["tipo"]
+        guard   = f"recompra_{op_id}_{hoje.isoformat()}"
+
+        if st.session_state.get(guard):
+            continue  # already alerted for this position today
+
+        # Get daily variation for the underlying
+        variacao: float | None = None
+        d = dados_mkt.get(ativo)
+        if d and "variacao_pct" in d:
+            variacao = d["variacao_pct"]
+            spot     = d.get("preco", 0.0)
+        else:
+            # Arbitrary underlying — compute from history
+            d_op = _mercado.buscar_dados_ativo_opcao(ativo)
+            hist = d_op.get("hist")
+            spot = d_op.get("preco") or 0.0
+            if hist is not None and len(hist) >= 2:
+                try:
+                    variacao = float(hist["Close"].iloc[-1] / hist["Close"].iloc[-2]) - 1
+                except Exception:
+                    pass
+
+        if variacao is None:
+            continue
+
+        # Check trigger condition
+        triggered = (
+            (tipo == "PUT"  and variacao >=  LIMIAR_RECOMPRA_PCT) or
+            (tipo == "CALL" and variacao <= -LIMIAR_RECOMPRA_PCT)
+        )
+        if not triggered:
+            continue
+
+        venc = op.get("vencimento")
+        if isinstance(venc, str):
+            venc = datetime.date.fromisoformat(venc)
+        dias = (venc - hoje).days if venc else "—"
+
+        disparadas.append({
+            "id":        op_id,
+            "guard":     guard,
+            "codigo":    (op.get("codigo_opcao") or "—").upper(),
+            "tipo":      tipo,
+            "ativo":     ativo,
+            "strike":    op["strike"],
+            "spot":      spot,
+            "variacao":  variacao,
+            "dias":      dias,
+            "premio":    op.get("premio_total", 0.0),
+        })
+
+    if not disparadas:
+        return False
+
+    # Build email
+    linhas = ""
+    for r in disparadas:
+        sinal   = f"+{r['variacao']*100:.1f}%" if r["variacao"] >= 0 else f"{r['variacao']*100:.1f}%"
+        cor_var = "#2ecc71" if r["variacao"] >= 0 else "#e74c3c"
+        acao    = "recomprar PUT" if r["tipo"] == "PUT" else "recomprar CALL"
+        linhas += f"""
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #333">{r['codigo']}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:center">{r['tipo']}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">R$ {r['strike']:.2f}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right">R$ {r['spot']:.2f}</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:right;color:{cor_var}"><strong>{sinal}</strong></td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:center">{r['dias']}d</td>
+          <td style="padding:8px;border-bottom:1px solid #333;text-align:center">{acao}</td>
+        </tr>"""
+
+    n = len(disparadas)
+    html = f"""
+    <html><body style="font-family:sans-serif;background:#0e1117;color:#fafafa;padding:24px">
+      <div style="max-width:620px;margin:auto;background:#1a1d27;border-radius:8px;padding:24px">
+        <h2 style="color:#2ecc71;margin-top:0">💰 Oportunidade de Recompra — {n} posição(ões)</h2>
+        <p>O ativo subjacente se moveu na direção favorável ao fechamento das posições abaixo.
+           Considere recomprar para realizar o lucro.</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:0.9rem">
+          <tr style="color:#888;font-size:0.8rem">
+            <th style="text-align:left;padding:6px">Código</th>
+            <th style="padding:6px">Tipo</th>
+            <th style="text-align:right;padding:6px">Strike</th>
+            <th style="text-align:right;padding:6px">Spot</th>
+            <th style="text-align:right;padding:6px">Variação</th>
+            <th style="padding:6px">Dias</th>
+            <th style="padding:6px">Ação sugerida</th>
+          </tr>
+          {linhas}
+        </table>
+        {_botao_link(cfg['app_url'], '📋 Abrir Carteira para encerrar posição')}
+        <p style="color:#888;font-size:0.8rem;margin-top:16px">
+          Avalie o prêmio de recompra no Home Broker. Esta oportunidade não implica obrigação de fechar.
+        </p>
+      </div>
+    </body></html>
+    """
+
+    assunto = f"[ETF Estratégia] 💰 Recompra de opção — {n} posição(ões) favorável(is)"
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = assunto
+    msg["From"]    = cfg["remetente"]
+    msg["To"]      = cfg["destinatario"]
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(cfg["host"], int(cfg["port"])) as server:
+            server.starttls(context=context)
+            server.login(cfg["remetente"], cfg["senha"])
+            server.sendmail(cfg["remetente"], cfg["destinatario"], msg.as_string())
+        # Mark all triggered positions as alerted for today
+        for r in disparadas:
+            st.session_state[r["guard"]] = True
+        return True
+    except Exception:
+        return False
+
+
 def verificar_e_alertar(dados_mercado: dict) -> str | None:
     """Check market data and send alert using progressive daily thresholds.
 

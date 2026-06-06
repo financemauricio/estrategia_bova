@@ -31,6 +31,11 @@ CALL_STRIKE_OTM_PCT: float = 0.03
 LIMIAR_QUEDA_PUT: float = -0.015   # daily drop >= 1.5 % → PUT priority
 LIMIAR_ALTA_CALL: float = 0.020    # daily rise >= 2.0 % → CALL priority
 
+# Movement of the underlying that signals a profitable buyback opportunity
+# PUT sold: underlying rises >= this → PUT is cheaper, good to close
+# CALL sold: underlying falls >= this → CALL is cheaper, good to close
+LIMIAR_RECOMPRA_PCT: float = 0.02
+
 # Moving-average window used for strategy decisions (days)
 MA_PERIODO: int = 50
 

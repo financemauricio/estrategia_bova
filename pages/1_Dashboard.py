@@ -55,6 +55,11 @@ patrimonio_total = total_etf + saldo
 if dados:
     alertas.verificar_e_alertar(dados)
 
+if dados and opcoes_abertas:
+    _enviado_recompra = alertas.alertar_oportunidade_recompra(opcoes_abertas, dados)
+    if _enviado_recompra:
+        st.info("📧 Alerta de recompra enviado — verifique o email.")
+
 # ---------------------------------------------------------------------------
 # Monday expiry summary — send once per day using session_state guard
 # ---------------------------------------------------------------------------
