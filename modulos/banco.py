@@ -238,21 +238,31 @@ def inserir_opcao(
     observacao : str
         Free-text note.
     """
-    sql = """
+    premio_total = premio_unitario * quantidade
+    sql_op = """
         INSERT INTO opcoes
             (data_abertura, tipo, ativo, codigo_opcao, strike, vencimento,
              quantidade, premio_unitario, premio_total, status, observacao)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ABERTA', %s)
     """
+    sql_cx = """
+        INSERT INTO caixa (data, tipo, valor, descricao)
+        VALUES (%s, 'ENTRADA', %s, %s)
+    """
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(
-                sql,
+                sql_op,
                 (
                     data_abertura, tipo, ativo, codigo_opcao, strike, vencimento,
-                    quantidade, premio_unitario, premio_unitario * quantidade, observacao,
+                    quantidade, premio_unitario, premio_total, observacao,
                 ),
             )
+            cur.execute(sql_cx, (
+                data_abertura,
+                premio_total,
+                f"Prêmio recebido — {codigo_opcao.upper()} {tipo}",
+            ))
     st.cache_data.clear()
 
 
@@ -314,14 +324,28 @@ def fechar_opcao(
     premio_recompra : float
         Unit premium paid to buy back the option (0 if expired worthless).
     """
-    sql = """
+    sql_up = """
         UPDATE opcoes
            SET status = %s, data_fechamento = %s, premio_recompra = %s
          WHERE id = %s
+        RETURNING codigo_opcao, tipo, quantidade
     """
     with _conn() as con:
         with con.cursor() as cur:
-            cur.execute(sql, (status, data_fechamento, premio_recompra, opcao_id))
+            cur.execute(sql_up, (status, data_fechamento, premio_recompra, opcao_id))
+            row = cur.fetchone()
+            # Register buyback cost as cash outflow when premium > 0
+            if premio_recompra > 0 and row:
+                codigo, tipo_op, qtd = row
+                custo = premio_recompra * qtd
+                cur.execute(
+                    "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'SAIDA', %s, %s)",
+                    (
+                        data_fechamento,
+                        custo,
+                        f"Recompra — {(codigo or '').upper()} {tipo_op} ({status})",
+                    ),
+                )
     st.cache_data.clear()
 
 
@@ -362,10 +386,12 @@ def rolar_opcao(
     int
         ID of the newly created option record.
     """
+    premio_novo_total = premio_unitario * quantidade
     close_sql = """
         UPDATE opcoes
            SET status = 'ROLADA', data_fechamento = %s, premio_recompra = %s
          WHERE id = %s
+        RETURNING codigo_opcao, tipo AS tipo_orig, quantidade AS qtd_orig
     """
     open_sql = """
         INSERT INTO opcoes
@@ -377,15 +403,40 @@ def rolar_opcao(
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(close_sql, (data_fechamento, premio_recompra, opcao_id))
+            row_orig = cur.fetchone()
+
+            # Cash outflow: buyback of the old option
+            if premio_recompra > 0 and row_orig:
+                cod_orig, tipo_orig, qtd_orig = row_orig
+                cur.execute(
+                    "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'SAIDA', %s, %s)",
+                    (
+                        data_fechamento,
+                        premio_recompra * qtd_orig,
+                        f"Recompra (roll) — {(cod_orig or '').upper()} {tipo_orig}",
+                    ),
+                )
+
             cur.execute(
                 open_sql,
                 (
                     data_fechamento, tipo, ativo, codigo_opcao, strike, vencimento,
-                    quantidade, premio_unitario, premio_unitario * quantidade,
+                    quantidade, premio_unitario, premio_novo_total,
                     opcao_id, observacao,
                 ),
             )
             new_id = cur.fetchone()[0]
+
+            # Cash inflow: premium received for the new option
+            cur.execute(
+                "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'ENTRADA', %s, %s)",
+                (
+                    data_fechamento,
+                    premio_novo_total,
+                    f"Prêmio recebido (roll) — {codigo_opcao.upper()} {tipo}",
+                ),
+            )
+
     st.cache_data.clear()
     return new_id
 
