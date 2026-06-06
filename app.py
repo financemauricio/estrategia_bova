@@ -21,19 +21,11 @@ except Exception as e:
     )
     st.stop()
 
-pages = {
-    "Principal": [
-        st.Page("pages/1_Dashboard.py", title="Dashboard", icon="📊"),
-    ],
-    "Gestão": [
-        st.Page("pages/2_Carteira.py", title="Carteira", icon="💼"),
-        st.Page("pages/3_Opcoes.py", title="Opções", icon="📋"),
-        st.Page("pages/4_Aportes.py", title="Aportes", icon="💰"),
-    ],
-    "Análise": [
-        st.Page("pages/5_Analise_Semanal.py", title="Análise Semanal", icon="📅"),
-    ],
-}
+pages = [
+    st.Page("pages/1_Dashboard.py",      title="Dashboard",       icon="📊"),
+    st.Page("pages/2_Carteira.py",        title="Carteira",        icon="💼"),
+    st.Page("pages/3_Analise_Semanal.py", title="Análise Semanal", icon="📅"),
+]
 
 pg = st.navigation(pages)
 pg.run()
