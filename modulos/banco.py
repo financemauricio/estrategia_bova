@@ -88,9 +88,15 @@ CREATE TABLE IF NOT EXISTS opcoes (
     status           TEXT NOT NULL DEFAULT 'ABERTA'
                          CHECK (status IN ('ABERTA', 'EXERCIDA', 'EXPIRADA', 'ROLADA')),
     data_fechamento  DATE,
+    premio_recompra  REAL DEFAULT 0,
+    origem_id        INTEGER REFERENCES opcoes(id),
     observacao       TEXT,
     criado_em        TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migrations: add new columns to existing tables (idempotent)
+ALTER TABLE opcoes ADD COLUMN IF NOT EXISTS premio_recompra REAL DEFAULT 0;
+ALTER TABLE opcoes ADD COLUMN IF NOT EXISTS origem_id INTEGER REFERENCES opcoes(id);
 
 CREATE TABLE IF NOT EXISTS aportes (
     id            SERIAL PRIMARY KEY,
@@ -290,7 +296,12 @@ def editar_opcao(
     st.cache_data.clear()
 
 
-def fechar_opcao(opcao_id: int, status: str, data_fechamento: str) -> None:
+def fechar_opcao(
+    opcao_id: int,
+    status: str,
+    data_fechamento: str,
+    premio_recompra: float = 0.0,
+) -> None:
     """Close an open option position.
 
     Parameters
@@ -300,16 +311,83 @@ def fechar_opcao(opcao_id: int, status: str, data_fechamento: str) -> None:
         'EXERCIDA', 'EXPIRADA', or 'ROLADA'.
     data_fechamento : str
         ISO date string.
+    premio_recompra : float
+        Unit premium paid to buy back the option (0 if expired worthless).
     """
     sql = """
         UPDATE opcoes
-           SET status = %s, data_fechamento = %s
+           SET status = %s, data_fechamento = %s, premio_recompra = %s
          WHERE id = %s
     """
     with _conn() as con:
         with con.cursor() as cur:
-            cur.execute(sql, (status, data_fechamento, opcao_id))
+            cur.execute(sql, (status, data_fechamento, premio_recompra, opcao_id))
     st.cache_data.clear()
+
+
+def rolar_opcao(
+    opcao_id: int,
+    data_fechamento: str,
+    premio_recompra: float,
+    # nova opção
+    tipo: str,
+    ativo: str,
+    codigo_opcao: str,
+    strike: float,
+    vencimento: str,
+    quantidade: int,
+    premio_unitario: float,
+    observacao: str = "",
+) -> int:
+    """Close the current option and open a new one in a single transaction.
+
+    The new option receives ``origem_id`` pointing to the rolled option,
+    enabling full roll-chain tracking.
+
+    Parameters
+    ----------
+    opcao_id : int
+        ID of the open option to roll.
+    data_fechamento : str
+        ISO date of the roll (closing date).
+    premio_recompra : float
+        Unit premium paid to buy back the current option.
+    tipo, ativo, codigo_opcao, strike, vencimento, quantidade, premio_unitario : ...
+        Fields for the new option being sold.
+    observacao : str
+        Free-text note for the new option.
+
+    Returns
+    -------
+    int
+        ID of the newly created option record.
+    """
+    close_sql = """
+        UPDATE opcoes
+           SET status = 'ROLADA', data_fechamento = %s, premio_recompra = %s
+         WHERE id = %s
+    """
+    open_sql = """
+        INSERT INTO opcoes
+            (data_abertura, tipo, ativo, codigo_opcao, strike, vencimento,
+             quantidade, premio_unitario, premio_total, status, origem_id, observacao)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ABERTA', %s, %s)
+        RETURNING id
+    """
+    with _conn() as con:
+        with con.cursor() as cur:
+            cur.execute(close_sql, (data_fechamento, premio_recompra, opcao_id))
+            cur.execute(
+                open_sql,
+                (
+                    data_fechamento, tipo, ativo, codigo_opcao, strike, vencimento,
+                    quantidade, premio_unitario, premio_unitario * quantidade,
+                    opcao_id, observacao,
+                ),
+            )
+            new_id = cur.fetchone()[0]
+    st.cache_data.clear()
+    return new_id
 
 
 # ---------------------------------------------------------------------------

@@ -497,16 +497,129 @@ if abertas:
 
     with st.form("form_fechar", clear_on_submit=True):
         opcao_sel_label = st.selectbox("Selecionar posição", list(_label_op.keys()))
-        fc1, fc2 = st.columns(2)
-        status_novo = fc1.selectbox("Novo status", ["EXERCIDA", "EXPIRADA", "ROLADA"])
-        data_fech = fc2.date_input("Data de fechamento", value=datetime.date.today())
+        fc1, fc2, fc3 = st.columns(3)
+        status_novo     = fc1.selectbox("Novo status", ["EXPIRADA", "EXERCIDA", "ROLADA"])
+        data_fech       = fc2.date_input("Data de fechamento", value=datetime.date.today())
+        recompra_unit   = fc3.number_input(
+            "Prêmio recompra (R$/ação)",
+            min_value=0.0, value=0.0, step=0.01, format="%.4f",
+            help="0 se expirou sem valor. Deixe 0 para EXERCIDA (não há recompra).",
+        )
 
-        if st.form_submit_button("Encerrar"):
-            banco.fechar_opcao(_label_op[opcao_sel_label]["id"], status_novo, str(data_fech))
-            st.success("Posição encerrada.")
+        # Live resultado preview inside form
+        _op_sel = _label_op[opcao_sel_label]
+        _resultado = _op_sel["premio_total"] - recompra_unit * _op_sel["quantidade"]
+        _cor_res = "🟢" if _resultado >= 0 else "🔴"
+        st.markdown(
+            f"**Prêmio recebido:** R$ {_op_sel['premio_total']:,.2f}  |  "
+            f"**Custo recompra:** R$ {recompra_unit * _op_sel['quantidade']:,.2f}  |  "
+            f"{_cor_res} **Resultado:** R$ {_resultado:,.2f}"
+        )
+
+        if st.form_submit_button("Encerrar posição", use_container_width=True):
+            banco.fechar_opcao(
+                _op_sel["id"], status_novo, str(data_fech),
+                premio_recompra=recompra_unit,
+            )
+            st.success(
+                f"Posição encerrada — resultado: R$ {_resultado:,.2f}"
+            )
             st.rerun()
 else:
     st.caption("Nenhuma posição aberta para encerrar.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Roll position — close + open in one step (Option B)
+# ---------------------------------------------------------------------------
+st.subheader("🔄 Rolar Posição")
+
+if abertas:
+    _label_roll = {
+        f"{(op['codigo_opcao'] or '—').upper()} — {op['tipo']} Strike {op['strike']} Venc. {op['vencimento']}": op
+        for op in abertas
+    }
+
+    # selectbox outside form for live parse feedback on the new code
+    _roll_sel_label = st.selectbox(
+        "Posição a rolar", list(_label_roll.keys()), key="roll_sel"
+    )
+    _op_roll = _label_roll[_roll_sel_label]
+
+    _roll_codigo = st.text_input(
+        "Código da NOVA opção",
+        placeholder="ex: BOVAS170",
+        key="roll_codigo_input",
+    ).upper().strip()
+    _roll_parsed = _parse_codigo(_roll_codigo) if _roll_codigo else {"ok": False}
+    _roll_venc_sugerido = (
+        _sugerir_vencimento(_roll_parsed["mes_idx"], _roll_parsed["semana"])
+        if _roll_parsed.get("ok") else datetime.date.today() + datetime.timedelta(days=30)
+    )
+
+    if _roll_codigo and _roll_parsed["ok"]:
+        st.success(
+            f"✅ **{_roll_parsed['ativo']}** · **{_roll_parsed['tipo']}** · "
+            f"vencimento sugerido **{_roll_venc_sugerido.strftime('%d/%m/%Y')}**"
+            + (f" · {_roll_parsed['semana']}" if _roll_parsed["semana"] else "")
+        )
+    elif _roll_codigo:
+        st.warning("⚠️ Código não reconhecido — verifique a nomenclatura B3.")
+
+    with st.form("form_rolar", clear_on_submit=True):
+        st.markdown("**Fechamento da posição atual**")
+        r1, r2 = st.columns(2)
+        data_roll     = r1.date_input("Data do roll", value=datetime.date.today())
+        recompra_roll = r2.number_input(
+            "Prêmio recompra (R$/ação)",
+            min_value=0.0, value=0.0, step=0.01, format="%.4f",
+        )
+
+        st.markdown("**Nova opção vendida**")
+        rn1, rn2, rn3 = st.columns(3)
+        strike_roll  = rn1.number_input("Strike (R$)", min_value=1.0, step=0.50, format="%.2f", value=float(_op_roll["strike"]))
+        venc_roll    = rn2.date_input("Vencimento", value=_roll_venc_sugerido)
+        qtd_roll     = rn3.number_input("Quantidade", min_value=1, step=1, value=int(_op_roll["quantidade"]))
+
+        rn4, rn5 = st.columns([2, 1])
+        premio_roll = rn4.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f")
+        obs_roll    = rn5.text_input("Observação")
+
+        _custo_recompra  = recompra_roll * _op_roll["quantidade"]
+        _credito_novo    = premio_roll * qtd_roll
+        _credito_liquido = _credito_novo - _custo_recompra
+        _cor_liq = "🟢" if _credito_liquido >= 0 else "🔴"
+        st.markdown(
+            f"**Custo recompra:** R$ {_custo_recompra:,.2f}  |  "
+            f"**Prêmio novo:** R$ {_credito_novo:,.2f}  |  "
+            f"{_cor_liq} **Crédito líquido do roll:** R$ {_credito_liquido:,.2f}"
+        )
+
+        if st.form_submit_button("🔄 Confirmar roll", use_container_width=True):
+            if not _roll_parsed.get("ok"):
+                st.error("Informe o código da nova opção antes de confirmar.")
+            else:
+                novo_id = banco.rolar_opcao(
+                    opcao_id=_op_roll["id"],
+                    data_fechamento=str(data_roll),
+                    premio_recompra=recompra_roll,
+                    tipo=_roll_parsed["tipo"],
+                    ativo=_roll_parsed["ativo"],
+                    codigo_opcao=_roll_codigo,
+                    strike=strike_roll,
+                    vencimento=str(venc_roll),
+                    quantidade=int(qtd_roll),
+                    premio_unitario=premio_roll,
+                    observacao=obs_roll,
+                )
+                st.success(
+                    f"✅ Roll executado — nova posição #{novo_id} **{_roll_codigo}** aberta. "
+                    f"Crédito líquido: R$ {_credito_liquido:,.2f}"
+                )
+                st.rerun()
+else:
+    st.caption("Nenhuma posição aberta para rolar.")
 
 st.divider()
 
@@ -559,13 +672,71 @@ st.divider()
 st.subheader("Histórico Completo")
 
 if todas:
-    df = pd.DataFrame(todas)
-    df["premio_total"] = df["premio_total"].map(lambda x: f"R$ {x:,.2f}")
-    df["strike"] = df["strike"].map(lambda x: f"R$ {x:.2f}")
-    cols_show = [
-        "id", "data_abertura", "tipo", "ativo", "codigo_opcao",
-        "strike", "vencimento", "quantidade", "premio_total", "status", "data_fechamento",
-    ]
-    st.dataframe(df[cols_show], use_container_width=True, hide_index=True)
+    hist_rows = []
+    for op in todas:
+        premio_total   = op.get("premio_total") or 0.0
+        recompra_unit  = op.get("premio_recompra") or 0.0
+        qtd            = op.get("quantidade") or 0
+        custo_recompra = recompra_unit * qtd
+        resultado      = premio_total - custo_recompra if op["status"] != "ABERTA" else None
+        origem         = op.get("origem_id")
+        hist_rows.append({
+            "ID": op["id"],
+            "Roll de": f"#{origem}" if origem else "—",
+            "Abertura": op["data_abertura"],
+            "Tipo": op["tipo"],
+            "Ativo": op["ativo"],
+            "Código": (op["codigo_opcao"] or "—").upper(),
+            "Strike": f"R$ {op['strike']:.2f}",
+            "Vencimento": op["vencimento"],
+            "Qtd": qtd,
+            "Prêmio Rec.": f"R$ {premio_total:,.2f}",
+            "Recompra": f"R$ {custo_recompra:,.2f}" if custo_recompra else "—",
+            "Resultado": (
+                f"{'🟢' if resultado >= 0 else '🔴'} R$ {resultado:,.2f}"
+                if resultado is not None else "aberta"
+            ),
+            "Status": op["status"],
+            "Fechamento": op.get("data_fechamento") or "—",
+        })
+    df_hist = pd.DataFrame(hist_rows)
+
+    # Color rows: ABERTA neutral, positive resultado green, negative red
+    def _row_color(row: dict) -> str:
+        if row["Status"] == "ABERTA":
+            return "#0e1117"
+        res_str = row["Resultado"]
+        if "🟢" in res_str:
+            return "#0d2b1a"
+        if "🔴" in res_str:
+            return "#2b0d0d"
+        return "#0e1117"
+
+    _row_cols_hist = [row for row in hist_rows]
+    _fill_colors = [[_row_color(r) for r in _row_cols_hist]] * len(df_hist.columns)
+
+    fig_hist = go.Figure(go.Table(
+        header=dict(
+            values=[f"<b>{c}</b>" for c in df_hist.columns],
+            fill_color="#1a1d27",
+            font=dict(color="white", size=12),
+            align="center",
+            line_color="#333",
+        ),
+        cells=dict(
+            values=[df_hist[c].tolist() for c in df_hist.columns],
+            fill_color=_fill_colors,
+            font=dict(color="white", size=11),
+            align="center",
+            line_color="#222",
+            height=30,
+        ),
+    ))
+    fig_hist.update_layout(
+        margin=dict(t=0, b=0, l=0, r=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=60 + len(hist_rows) * 34,
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
 else:
     st.info("Nenhuma operação registrada ainda.")
