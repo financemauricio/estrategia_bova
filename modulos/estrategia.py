@@ -2,7 +2,7 @@
 
 All logic mirrors the operational script exactly:
 
-  Step 1 → Is BOVA11 above or below MA200?  (determines bias)
+  Step 1 → Is BOVA11 above or below MA_PERIODO?  (determines bias)
   Step 2 → Is there enough cash / ETF to honour exercise?
   Step 3 → Was there a relevant daily movement? (> 1.5 % drop or > 2 % rise)
   Step 4 → Is the premium attractive?  (user confirms manually)
@@ -60,7 +60,7 @@ def avaliar_estrategia(
     """
     bova = dados_mercado.get("BOVA11", {})
     preco: float | None = bova.get("preco")
-    ma200: float | None = bova.get("ma_decisao")   # uses MA_PERIODO from config
+    ma_decisao: float | None = bova.get("ma_decisao")   # uses MA_PERIODO from config
     variacao: float = bova.get("variacao_pct", 0.0)
 
     patrimonio_total = total_etf + saldo_caixa
@@ -68,15 +68,15 @@ def avaliar_estrategia(
     # ------------------------------------------------------------------
     # Step 1 — price vs decision MA (MA_PERIODO)
     # ------------------------------------------------------------------
-    if preco and ma200:
-        acima_ma200 = preco > ma200
-        distancia_pct = (preco - ma200) / ma200
+    if preco and ma_decisao:
+        acima_ma = preco > ma_decisao
+        distancia_pct = (preco - ma_decisao) / ma_decisao
         passo1 = {
             "ok": True,
-            "resultado": "ACIMA" if acima_ma200 else "ABAIXO",
-            "vies": "CALL" if acima_ma200 else "PUT",
+            "resultado": "ACIMA" if acima_ma else "ABAIXO",
+            "vies": "CALL" if acima_ma else "PUT",
             "preco": preco,
-            "ma_val": ma200,
+            "ma_val": ma_decisao,
             "distancia_pct": distancia_pct,
         }
     else:
@@ -85,7 +85,7 @@ def avaliar_estrategia(
             "resultado": "Dados insuficientes",
             "vies": "INDEFINIDO",
             "preco": preco,
-            "ma_val": ma200,
+            "ma_val": ma_decisao,
             "distancia_pct": None,
         }
 

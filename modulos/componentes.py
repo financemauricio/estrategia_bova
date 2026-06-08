@@ -104,6 +104,20 @@ def preco_ativo(ativo: str, dados_mkt: dict) -> float | None:
     return preco if preco and preco > 0 else None
 
 
+def validar_saida_caixa(saldo: float, valor: float) -> str | None:
+    """Return an error message if ``valor`` exceeds ``saldo``, else None."""
+    if valor <= 0:
+        return None
+    if saldo < valor:
+        falta = valor - saldo
+        return (
+            f"Caixa insuficiente: necessário R$ {valor:,.2f}, "
+            f"disponível R$ {saldo:,.2f} (faltam R$ {falta:,.2f}). "
+            "Registre um aporte ou depósito em **Caixa e Movimentações** antes de continuar."
+        )
+    return None
+
+
 def distancia_strike(tipo: str, preco_spot: float, strike: float) -> str:
     """Format % distance from spot price to strike with OTM/ITM label.
 

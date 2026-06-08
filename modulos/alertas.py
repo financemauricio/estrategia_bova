@@ -53,7 +53,7 @@ def _botao_link(url: str, texto: str = "🚀 Acessar o painel agora") -> str:
     </div>"""
 
 
-def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | None, app_url: str = "") -> str:
+def _html_template(tipo: str, variacao_pct: float, preco: float, ma_decisao: float | None, app_url: str = "") -> str:
     cor = "#e74c3c" if tipo == "PUT" else "#2ecc71"
     acao = "VENDER PUT ATM" if tipo == "PUT" else "VENDER CALL 3% OTM"
     motivo = (
@@ -61,7 +61,9 @@ def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | 
         if tipo == "PUT"
         else f"alta de {variacao_pct*100:.2f} % no dia"
     )
-    ma200_str = f"R$ {ma200:.2f}" if ma200 else "N/D"
+    from config import MA_PERIODO
+
+    ma_str = f"R$ {ma_decisao:.2f}" if ma_decisao else "N/D"
 
     return f"""
     <html><body style="font-family:sans-serif;background:#0e1117;color:#fafafa;padding:24px">
@@ -73,8 +75,8 @@ def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | 
               <td style="padding:8px;border-bottom:1px solid #333;text-align:right"><strong>R$ {preco:.2f}</strong></td></tr>
           <tr><td style="padding:8px;border-bottom:1px solid #333">Variação</td>
               <td style="padding:8px;border-bottom:1px solid #333;text-align:right;color:{cor}"><strong>{variacao_pct*100:+.2f} %</strong></td></tr>
-          <tr><td style="padding:8px">MA 200</td>
-              <td style="padding:8px;text-align:right">{ma200_str}</td></tr>
+          <tr><td style="padding:8px">MA {MA_PERIODO}</td>
+              <td style="padding:8px;text-align:right">{ma_str}</td></tr>
         </table>
         <div style="background:{cor};color:#000;padding:12px 20px;border-radius:6px;
                     text-align:center;font-weight:bold;font-size:1.1rem">
@@ -89,7 +91,7 @@ def _html_template(tipo: str, variacao_pct: float, preco: float, ma200: float | 
     """
 
 
-def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | None) -> bool:
+def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma_decisao: float | None) -> bool:
     """Send an opportunity alert e-mail.
 
     Parameters
@@ -100,8 +102,8 @@ def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | N
         Daily return fraction (e.g. -0.018).
     preco : float
         Current BOVA11 price.
-    ma200 : float or None
-        Current MA200 value.
+    ma_decisao : float or None
+        Current decision MA value (MA_PERIODO from config).
 
     Returns
     -------
@@ -119,7 +121,7 @@ def enviar_alerta(tipo: str, variacao_pct: float, preco: float, ma200: float | N
     msg["Subject"] = assunto
     msg["From"] = cfg["remetente"]
     msg["To"] = cfg["destinatario"]
-    msg.attach(MIMEText(_html_template(tipo, variacao_pct, preco, ma200, cfg["app_url"]), "html"))
+    msg.attach(MIMEText(_html_template(tipo, variacao_pct, preco, ma_decisao, cfg["app_url"]), "html"))
 
     try:
         context = ssl.create_default_context()
@@ -551,17 +553,17 @@ def verificar_e_alertar(dados_mercado: dict) -> str | None:
     bova     = dados_mercado.get("BOVA11", {})
     variacao = bova.get("variacao_pct", 0.0)
     preco    = bova.get("preco", 0.0)
-    ma200    = bova.get("ma_decisao")
+    ma_decisao = bova.get("ma_decisao")
 
     if variacao <= limiar_put:
-        enviado = enviar_alerta("PUT", variacao, preco, ma200)
+        enviado = enviar_alerta("PUT", variacao, preco, ma_decisao)
         if enviado:
             # Tighten: next PUT alert only on an additional -0.5% move
             st.session_state[key_put] = limiar_put - _STEP
         return "PUT"
 
     if variacao >= limiar_call:
-        enviado = enviar_alerta("CALL", variacao, preco, ma200)
+        enviado = enviar_alerta("CALL", variacao, preco, ma_decisao)
         if enviado:
             # Tighten: next CALL alert only on an additional +0.5% move
             st.session_state[key_call] = limiar_call + _STEP

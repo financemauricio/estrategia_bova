@@ -5,7 +5,8 @@ Layout
 Zone 1 : Status strip   — 5 KPIs always visible (patrimônio, caixa, comprometido, livre, próximo vencimento)
 Zone 2 : Alert banner   — shown only when a position expires in ≤ 7 days
 Zone 3 : Options table  — selectable rows (PUT=blue, CALL=green) + contextual action panel
-Zone 4 : Expanders      — ETF positions, cash, aportes, full options history
+Zone 4 : Performance    — cumulative return vs IBOV, IVV, HASH11
+Zone 5 : Expanders      — ETF positions, cash, aportes, options history
 """
 
 from __future__ import annotations
@@ -20,8 +21,14 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import ALOCACAO_ALVO, APORTE_MENSAL
-from modulos import banco, bs, mercado
-from modulos.componentes import distancia_strike, preco_ativo, prob_badge, prob_exercicio
+from modulos import banco, bs, mercado, performance
+from modulos.componentes import (
+    distancia_strike,
+    preco_ativo,
+    prob_badge,
+    prob_exercicio,
+    validar_saida_caixa,
+)
 
 
 # ─── B3 option code parser ────────────────────────────────────────────────────
@@ -273,9 +280,14 @@ if abertas:
             _total_n  = qtd_n * premio_n
             _reserva_n = strike_n * qtd_n if _prs.get("tipo") == "PUT" else 0.0
             st.markdown(
-                f"💰 **Prêmio total:** R$ {_total_n:,.2f}"
-                + (f"  |  🔒 **Reserva:** R$ {_reserva_n:,.2f}" if _reserva_n else "")
+                f"💰 **Prêmio total:** R$ {_total_n:,.2f} (crédito no caixa)"
+                + (f"  |  🔒 **Reserva necessária:** R$ {_reserva_n:,.2f}" if _reserva_n else "")
             )
+            if _reserva_n and caixa_livre + _total_n < _reserva_n:
+                st.warning(
+                    f"Após o prêmio, o caixa livre ficará em R$ {caixa_livre + _total_n:,.2f}, "
+                    f"abaixo da reserva de R$ {_reserva_n:,.2f}. Considere aportar antes de vender a PUT."
+                )
             if st.form_submit_button("✅ Registrar venda", use_container_width=True):
                 if not _prs["ok"]:
                     st.error("Informe um código válido antes de registrar.")
@@ -315,25 +327,73 @@ if abertas:
     # ── Panel: Encerrar ────────────────────────────────────────────────────
     elif st.session_state.acao_opcao == "encerrar" and _op_ativa:
         st.subheader("✅ Encerrar Posição")
+        fc1, fc2, fc3 = st.columns(3)
+        status_f   = fc1.selectbox("Novo status", ["EXPIRADA", "EXERCIDA"], key="status_fechar")
+        data_f     = fc2.date_input("Data de fechamento", value=hoje, key="data_fechar")
+        recompra_f = fc3.number_input(
+            "Prêmio recompra (R$/ação)", min_value=0.0, value=0.0, step=0.01, format="%.4f",
+            key="recompra_fechar",
+            help="Use apenas ao recomprar antes do vencimento. Deixe 0 se expirou ou foi exercida.",
+            disabled=status_f == "EXERCIDA",
+        )
+        if status_f == "EXERCIDA":
+            recompra_f = 0.0
+
+        _custo_recompra = recompra_f * _op_ativa["quantidade"]
+        _impacto_ex = (
+            banco.impacto_exercicio(_op_ativa["tipo"], _op_ativa["strike"], _op_ativa["quantidade"])
+            if status_f == "EXERCIDA"
+            else None
+        )
+        _res = _op_ativa["premio_total"] - _custo_recompra
+
+        st.markdown(
+            f"**Prêmio recebido:** R$ {_op_ativa['premio_total']:,.2f}  |  "
+            f"**Custo recompra:** R$ {_custo_recompra:,.2f}  |  "
+            f"{'🟢' if _res >= 0 else '🔴'} **Resultado opção:** R$ {_res:,.2f}"
+        )
+        st.caption(f"Caixa atual: **R$ {saldo:,.2f}**  |  Caixa livre (após reservas PUT): **R$ {caixa_livre:,.2f}**")
+
+        _erro_caixa: str | None = None
+        if _custo_recompra > 0:
+            _erro_caixa = validar_saida_caixa(saldo, _custo_recompra)
+            if _erro_caixa:
+                st.error(_erro_caixa)
+            else:
+                st.info(f"Recompra debitará **R$ {_custo_recompra:,.2f}** do caixa.")
+
+        if _impacto_ex:
+            if _impacto_ex["tipo"] == "SAIDA":
+                _erro_ex = validar_saida_caixa(saldo, _impacto_ex["valor"])
+                if _erro_ex:
+                    _erro_caixa = _erro_ex
+                    st.error(
+                        f"Exercício de PUT exige **R$ {_impacto_ex['valor']:,.2f}** para compra das ações. {_erro_ex}"
+                    )
+                else:
+                    st.warning(
+                        f"Exercício debitará **R$ {_impacto_ex['valor']:,.2f}** do caixa "
+                        f"(compra de {_op_ativa['quantidade']} {_op_ativa['ativo']} a R$ {_op_ativa['strike']:.2f})."
+                    )
+            else:
+                st.success(
+                    f"Exercício creditará **R$ {_impacto_ex['valor']:,.2f}** no caixa "
+                    f"(venda de {_op_ativa['quantidade']} {_op_ativa['ativo']} a R$ {_op_ativa['strike']:.2f}). "
+                    "Atualize manualmente a posição ETF se necessário."
+                )
+
         with st.form("form_fechar", clear_on_submit=True):
-            fc1, fc2, fc3 = st.columns(3)
-            status_f   = fc1.selectbox("Novo status", ["EXPIRADA", "EXERCIDA"])
-            data_f     = fc2.date_input("Data de fechamento", value=hoje)
-            recompra_f = fc3.number_input(
-                "Prêmio recompra (R$/ação)", min_value=0.0, value=0.0, step=0.01, format="%.4f",
-                help="0 se expirou sem valor ou se foi exercida.",
-            )
-            _res = _op_ativa["premio_total"] - recompra_f * _op_ativa["quantidade"]
-            st.markdown(
-                f"**Prêmio recebido:** R$ {_op_ativa['premio_total']:,.2f}  |  "
-                f"**Custo recompra:** R$ {recompra_f * _op_ativa['quantidade']:,.2f}  |  "
-                f"{'🟢' if _res >= 0 else '🔴'} **Resultado:** R$ {_res:,.2f}"
-            )
-            if st.form_submit_button("Encerrar posição", use_container_width=True):
-                banco.fechar_opcao(_op_ativa["id"], status_f, str(data_f), premio_recompra=recompra_f)
-                st.session_state.acao_opcao = None
-                st.success(f"Posição encerrada — resultado: R$ {_res:,.2f}")
-                st.rerun()
+            if st.form_submit_button("Encerrar posição", use_container_width=True, disabled=bool(_erro_caixa)):
+                try:
+                    banco.fechar_opcao(
+                        _op_ativa["id"], status_f, str(data_f), premio_recompra=recompra_f,
+                    )
+                except banco.CaixaInsuficienteError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state.acao_opcao = None
+                    st.success(f"Posição encerrada — resultado: R$ {_res:,.2f}")
+                    st.rerun()
 
     # ── Panel: Rolar ───────────────────────────────────────────────────────
     elif st.session_state.acao_opcao == "rolar" and _op_ativa:
@@ -375,20 +435,37 @@ if abertas:
                 f"**Prêmio novo:** R$ {_cred_r:,.2f}  |  "
                 f"{'🟢' if _liq_r >= 0 else '🔴'} **Crédito líquido:** R$ {_liq_r:,.2f}"
             )
-            if st.form_submit_button("🔄 Confirmar roll", use_container_width=True):
+            _erro_roll = validar_saida_caixa(saldo, _custo_r) if _custo_r > 0 else None
+            if _erro_roll:
+                st.error(_erro_roll)
+            elif _custo_r > 0:
+                st.info(f"Recompra no roll debitará **R$ {_custo_r:,.2f}** do caixa.")
+
+            if st.form_submit_button(
+                "🔄 Confirmar roll",
+                use_container_width=True,
+                disabled=bool(_erro_roll),
+            ):
                 if not _roll_prs.get("ok"):
                     st.error("Informe o código da nova opção antes de confirmar.")
                 else:
-                    novo_id = banco.rolar_opcao(
-                        opcao_id=_op_ativa["id"], data_fechamento=str(data_r),
-                        premio_recompra=recomp_r, tipo=_roll_prs["tipo"],
-                        ativo=_roll_prs["ativo"], codigo_opcao=_roll_cod,
-                        strike=strike_r, vencimento=str(venc_r),
-                        quantidade=int(qtd_r), premio_unitario=premio_r, observacao=obs_r,
-                    )
-                    st.session_state.acao_opcao = None
-                    st.success(f"✅ Roll executado — posição #{novo_id} **{_roll_cod}** aberta. Crédito: R$ {_liq_r:,.2f}")
-                    st.rerun()
+                    try:
+                        novo_id = banco.rolar_opcao(
+                            opcao_id=_op_ativa["id"], data_fechamento=str(data_r),
+                            premio_recompra=recomp_r, tipo=_roll_prs["tipo"],
+                            ativo=_roll_prs["ativo"], codigo_opcao=_roll_cod,
+                            strike=strike_r, vencimento=str(venc_r),
+                            quantidade=int(qtd_r), premio_unitario=premio_r, observacao=obs_r,
+                        )
+                    except banco.CaixaInsuficienteError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state.acao_opcao = None
+                        st.success(
+                            f"✅ Roll executado — posição #{novo_id} **{_roll_cod}** aberta. "
+                            f"Crédito líquido: R$ {_liq_r:,.2f}"
+                        )
+                        st.rerun()
 
 else:
     # No open positions — show new sale button only
@@ -434,6 +511,55 @@ else:
                     st.session_state.acao_opcao = None
                     st.success(f"✅ Registrada — R$ {_tot_nv:,.2f}")
                     st.rerun()
+
+st.divider()
+
+# ─── Performance vs benchmarks ───────────────────────────────────────────────
+st.subheader("📈 Performance vs IBOV, IVV e HASH11")
+try:
+    _perf = performance.calcular_performance()
+except Exception as _perf_exc:
+    st.error(f"Erro ao calcular performance: {_perf_exc}")
+    _perf = None
+
+if _perf is None:
+    st.info(
+        "Registre posições ETF, aportes ou movimentações de caixa para "
+        "habilitar o gráfico de performance."
+    )
+else:
+    _res = _perf["resumo"]
+    st.caption(
+        f"Desde **{_res['data_inicio'].strftime('%d/%m/%Y')}** · "
+        f"Patrimônio atual: **R$ {_res['patrimonio_atual']:,.2f}**"
+    )
+    _m1, _m2, _m3, _m4 = st.columns(4)
+    _m1.metric("Carteira", f"{_res['carteira_pct']:+.2f} %")
+    _alphas_ord = list(_res["alphas"].items())
+    for _col, (_bench, _alpha) in zip((_m2, _m3, _m4), _alphas_ord[:3]):
+        _lbl = _bench.replace("S&P 500 (IVV)", "IVV").replace("IBOV (BOVA11)", "IBOV")
+        _col.metric(
+            f"α vs {_lbl}",
+            f"{_alpha:+.2f} pp",
+            help="Diferença em pontos percentuais vs o índice no mesmo período",
+        )
+    _fig_perf = performance.grafico_performance(_perf["retornos"])
+    st.plotly_chart(_fig_perf, use_container_width=True)
+    _alpha_rows = [
+        {
+            "Referência": bench,
+            "Retorno índice (%)": f"{_perf['retornos'][bench].iloc[-1]:+.2f}",
+            "Carteira (%)":       f"{_res['carteira_pct']:+.2f}",
+            "Diferença (pp)":     f"{alpha:+.2f}",
+            "Status": "🟢 Acima" if alpha > 0 else ("🔴 Abaixo" if alpha < 0 else "—"),
+        }
+        for bench, alpha in _res["alphas"].items()
+    ]
+    st.dataframe(pd.DataFrame(_alpha_rows), use_container_width=True, hide_index=True)
+    st.caption(
+        "IBOV via BOVA11 · IVV = S&P 500 em USD convertido para BRL · "
+        "Benchmark 70/20/10 = composição alvo. Prêmios de opções entram via caixa."
+    )
 
 st.divider()
 
@@ -537,6 +663,10 @@ with st.expander("📊 Posições ETF e Alocação"):
 
 # ── Expander 2: Cash ──────────────────────────────────────────────────────────
 with st.expander("💵 Caixa e Movimentações"):
+    st.caption(
+        "Prêmios de opções entram automaticamente. Recompras e exercícios de PUT saem do caixa. "
+        "Aportes creditam o valor recebido e debitam o que foi investido em ETFs."
+    )
     _ck1, _ck2, _ck3 = st.columns(3)
     _ck1.metric("Saldo total", f"R$ {saldo:,.2f}")
     _ck2.metric("Comprometido PUTs", f"R$ {comprometido:,.2f}")
@@ -565,9 +695,13 @@ with st.expander("💵 Caixa e Movimentações"):
         _valor_cx = _cc3.number_input("Valor (R$)", min_value=0.01, step=10.0, format="%.2f")
         _desc_cx  = _cc4.text_input("Descrição")
         if st.form_submit_button("Registrar movimentação"):
-            banco.registrar_caixa(str(_data_cx), _tipo_cx, _valor_cx, _desc_cx)
-            st.success("Movimentação registrada.")
-            st.rerun()
+            try:
+                banco.registrar_caixa(str(_data_cx), _tipo_cx, _valor_cx, _desc_cx)
+            except banco.CaixaInsuficienteError as exc:
+                st.error(str(exc))
+            else:
+                st.success("Movimentação registrada.")
+                st.rerun()
 
     _mov = banco.listar_caixa(20)
     if _mov:
@@ -588,7 +722,7 @@ with st.expander("💰 Aportes"):
         _fb1, _fb2, _fb3 = st.columns(3)
         _sug_ap = mercado.sugerir_alocacao_aporte(_valor_ap, patrimonio, saldo, ALOCACAO_ALVO)
         _bova_v = _fb1.number_input("BOVA11 — R$", min_value=0.0, value=_sug_ap.get("BOVA11", 0.0), step=10.0, format="%.2f")
-        _ivvb_v = _fb2.number_input("IVVB11 — R$", min_value=0.0, value=_sug_ap.get("IVVB11", 0.0), step=10.0, format="%.2f")
+        _ivv_v = _fb2.number_input("IVV — R$", min_value=0.0, value=_sug_ap.get("IVV", 0.0), step=10.0, format="%.2f")
         _hash_v = _fb3.number_input("HASH11 — R$", min_value=0.0, value=_sug_ap.get("HASH11", 0.0), step=10.0, format="%.2f")
 
         def _qtd_ap(ticker: str, valor: float) -> float:
@@ -599,15 +733,19 @@ with st.expander("💰 Aportes"):
         _ivv_d = dados.get("IVV", {})
         st.caption(
             f"BOVA11 ≈ {_qtd_ap('BOVA11', _bova_v):.2f} cotas | "
-            f"IVV ≈ {_qtd_ap('IVV', _ivvb_v):.4f} cotas (US$ {_ivv_d.get('preco', 0):.2f}) | "
+            f"IVV ≈ {_qtd_ap('IVV', _ivv_v):.4f} cotas (US$ {_ivv_d.get('preco', 0):.2f}) | "
             f"HASH11 ≈ {_qtd_ap('HASH11', _hash_v):.2f} cotas"
         )
+        _investido_ap = _bova_v + _ivv_v + _hash_v
+        _sobra_ap = _valor_ap - _investido_ap
+        if _sobra_ap > 0.01:
+            st.info(f"R$ {_sobra_ap:,.2f} permanecerão em caixa (aporte não totalmente investido).")
         _obs_ap = st.text_input("Observação", key="obs_aporte")
         if st.form_submit_button("Registrar aporte"):
             banco.inserir_aporte(
                 data=str(_data_ap), valor_total=_valor_ap,
                 bova11_qtd=_qtd_ap("BOVA11", _bova_v), bova11_valor=_bova_v,
-                ivvb11_qtd=_qtd_ap("IVV", _ivvb_v),   ivvb11_valor=_ivvb_v,
+                ivvb11_qtd=_qtd_ap("IVV", _ivv_v),     ivvb11_valor=_ivv_v,
                 hash11_qtd=_qtd_ap("HASH11", _hash_v), hash11_valor=_hash_v,
                 observacao=_obs_ap,
             )

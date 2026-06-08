@@ -1,18 +1,19 @@
 # Monitor Estratégia ETF + Opções
 
-Painel de controle para a estratégia de acumulação com BOVA11, IVVB11 e HASH11 via venda sistemática de opções.
+Painel de controle para a estratégia de acumulação com BOVA11, IVV (NYSE) e HASH11 via venda sistemática de opções.
 
 ---
 
 ## Funcionalidades
 
-- Preço em tempo real de BOVA11, IVVB11 e HASH11 (atualiza a cada 5 minutos)
-- Média de 200 dias do BOVA11 e posição relativa (acima/abaixo)
+- Preço em tempo real de BOVA11, IVV e HASH11 (atualiza a cada 5 minutos)
+- MA50 do BOVA11 para decisão (MA100/MA200 como referência visual)
 - Motor de regras com os 5 passos da estratégia e recomendação automática (PUT ATM ou CALL 3% OTM)
 - Alerta por e-mail quando queda > 1,5 % ou alta > 2 %
 - Registro de posições em ETFs, aportes mensais e operações com opções
 - Calculadora de aporte para rebalancear a carteira (alvo 70/20/10)
-- Gráfico de candlestick do BOVA11 com linha da MA200
+- Gráfico de candlestick do BOVA11 com médias móveis
+- Controle de caixa integrado: prêmios, recompras, exercícios e aportes
 - Funciona em qualquer dispositivo (celular, tablet, PC)
 
 ---
@@ -139,13 +140,13 @@ estrategia_acumulacao/
 │   ├── banco.py               # Banco de dados (Supabase PostgreSQL)
 │   ├── mercado.py             # Dados de mercado (yfinance)
 │   ├── estrategia.py          # Motor de regras (5 passos)
-│   └── alertas.py             # Alertas por e-mail
+│   ├── alertas.py             # Alertas por e-mail
+│   ├── bs.py                  # Black-Scholes e Selic
+│   └── componentes.py         # Helpers de UI compartilhados
 └── pages/
     ├── 1_Dashboard.py         # Painel principal (atualização automática)
-    ├── 2_Carteira.py          # Posições e calculadora de aporte
-    ├── 3_Opcoes.py            # Registro e acompanhamento de opções
-    ├── 4_Aportes.py           # Histórico de aportes mensais
-    └── 5_Analise_Semanal.py   # Checklist semanal e gráfico MA200
+    ├── 2_Carteira.py          # Opções, ETFs, caixa e aportes (página central)
+    └── 3_Analise_Semanal.py   # Checklist semanal e gráfico com MAs
 ```
 
 ---
@@ -161,9 +162,29 @@ Edite apenas `config.py`:
 | `CALL_STRIKE_OTM_PCT` | 3 % | Strike da CALL acima do preço |
 | `LIMIAR_QUEDA_PUT` | -1,5 % | Queda que aciona prioridade PUT |
 | `LIMIAR_ALTA_CALL` | +2,0 % | Alta que aciona prioridade CALL |
-| `MA_PERIODO` | 200 dias | Janela da média móvel |
+| `MA_PERIODO` | 50 dias | Média móvel usada na decisão |
+| `MA_VISUALIZACAO` | 50/100/200 | MAs exibidas nos gráficos |
+| `LIMIAR_RECOMPRA_PCT` | 2 % | Movimento favorável para alerta de recompra |
 | `APORTE_MENSAL` | R$ 5.000 | Sugestão padrão de aporte |
 | `REFRESH_INTERVAL_SECONDS` | 300 s | Frequência de atualização do dashboard |
+
+---
+
+## Fluxo de Caixa
+
+O saldo em **Caixa e Movimentações** (página Carteira) reflete o dinheiro líquido na corretora:
+
+| Evento | Movimento |
+|---|---|
+| Venda de opção (prêmio) | ENTRADA automática |
+| Recompra de opção | SAÍDA automática (bloqueada se saldo insuficiente) |
+| PUT exercida | SAÍDA = strike × quantidade (compra das ações) |
+| CALL exercida | ENTRADA = strike × quantidade (venda das ações) |
+| Aporte registrado | ENTRADA do valor total + SAÍDA do valor investido em ETFs |
+| Depósito/saque manual | ENTRADA ou SAÍDA via formulário de caixa |
+
+PUTs abertas reservam `strike × quantidade` do caixa (exibido como **Comprometido**).
+Se o caixa for insuficiente para exercício ou recompra, registre um aporte ou depósito antes de encerrar a posição.
 
 ---
 

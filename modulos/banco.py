@@ -61,6 +61,186 @@ def _conn() -> Generator[psycopg2.extensions.connection, None, None]:
         con.close()
 
 
+class CaixaInsuficienteError(ValueError):
+    """Raised when a cash outflow exceeds the current balance."""
+
+
+def _saldo_no_cursor(cur: psycopg2.extensions.cursor) -> float:
+    """Return net cash balance from the open transaction."""
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(CASE WHEN tipo='ENTRADA' THEN valor ELSE -valor END), 0)
+        FROM caixa
+        """
+    )
+    return float(cur.fetchone()[0])
+
+
+def _registrar_movimento_caixa(
+    cur: psycopg2.extensions.cursor,
+    data: str,
+    tipo: str,
+    valor: float,
+    descricao: str,
+) -> None:
+    """Insert a cash ledger row using the caller's cursor."""
+    cur.execute(
+        "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, %s, %s, %s)",
+        (data, tipo, valor, descricao),
+    )
+
+
+def _validar_saida(cur: psycopg2.extensions.cursor, valor: float, contexto: str) -> None:
+    """Ensure the account has enough cash before a debit."""
+    if valor <= 0:
+        return
+    saldo = _saldo_no_cursor(cur)
+    if saldo < valor:
+        raise CaixaInsuficienteError(
+            f"Caixa insuficiente para {contexto}: "
+            f"necessário R$ {valor:,.2f}, disponível R$ {saldo:,.2f}. "
+            "Registre um aporte ou depósito em caixa antes de continuar."
+        )
+
+
+def _tag_opcao(opcao_id: int) -> str:
+    return f"op#{opcao_id}"
+
+
+def _desc_premio(opcao_id: int, codigo: str, tipo: str, *, roll: bool = False) -> str:
+    prefix = "Prêmio recebido (roll)" if roll else "Prêmio recebido"
+    return f"{prefix} — {_tag_opcao(opcao_id)} {(codigo or '').upper()} {tipo}"
+
+
+def _desc_recompra(opcao_id: int, codigo: str, tipo: str, contexto: str) -> str:
+    return f"Recompra — {_tag_opcao(opcao_id)} {(codigo or '').upper()} {tipo} ({contexto})"
+
+
+def _desc_exercicio(opcao_id: int, codigo: str, impacto: dict[str, Any]) -> str:
+    return f"{impacto['descricao']} — {_tag_opcao(opcao_id)} {(codigo or '').upper()}"
+
+
+def _caixa_opcao_existe(cur: psycopg2.extensions.cursor, opcao_id: int, kind: str) -> bool:
+    """Check whether a cash row for this option and movement type already exists."""
+    patterns = {
+        "premio": "%prêmio recebido%",
+        "recompra": "%recompra%",
+        "exercicio": "%exercício%",
+    }
+    pattern = patterns[kind]
+    cur.execute(
+        """
+        SELECT 1 FROM caixa
+         WHERE descricao LIKE %s AND descricao ILIKE %s
+         LIMIT 1
+        """,
+        (f"%{_tag_opcao(opcao_id)}%", pattern),
+    )
+    if cur.fetchone():
+        return True
+
+    # Legacy rows created before op# tagging
+    if kind != "premio":
+        return False
+    cur.execute(
+        """
+        SELECT o.codigo_opcao, o.tipo, o.premio_total
+          FROM opcoes o
+         WHERE o.id = %s
+        """,
+        (opcao_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    codigo = row["codigo_opcao"]
+    premio_total = float(row["premio_total"])
+    cur.execute(
+        """
+        SELECT 1 FROM caixa
+         WHERE tipo = 'ENTRADA'
+           AND ABS(valor - %s) < 0.01
+           AND descricao ILIKE %s
+           AND descricao ILIKE %s
+           AND descricao NOT LIKE '%%op#%%'
+         LIMIT 1
+        """,
+        (
+            premio_total,
+            "%prêmio recebido%",
+            f"%{(codigo or '').upper()}%",
+        ),
+    )
+    return cur.fetchone() is not None
+
+
+def sincronizar_caixa_opcoes() -> dict[str, int]:
+    """Backfill missing cash ledger rows for options registered before auto-sync.
+
+    Idempotent — safe to run on every app startup.
+    """
+    stats = {"premios": 0, "recompras": 0, "exercicios": 0}
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM opcoes ORDER BY id")
+            for op in cur.fetchall():
+                op_id = op["id"]
+                codigo = op["codigo_opcao"] or ""
+                tipo = op["tipo"]
+                data_ab = str(op["data_abertura"])
+
+                if not _caixa_opcao_existe(cur, op_id, "premio"):
+                    _registrar_movimento_caixa(
+                        cur,
+                        data_ab,
+                        "ENTRADA",
+                        float(op["premio_total"]),
+                        _desc_premio(op_id, codigo, tipo),
+                    )
+                    stats["premios"] += 1
+
+                if op["status"] in ("EXPIRADA", "ROLADA", "EXERCIDA") and op.get("premio_recompra"):
+                    custo = float(op["premio_recompra"]) * int(op["quantidade"])
+                    if custo > 0 and not _caixa_opcao_existe(cur, op_id, "recompra"):
+                        data_f = str(op.get("data_fechamento") or data_ab)
+                        _registrar_movimento_caixa(
+                            cur,
+                            data_f,
+                            "SAIDA",
+                            custo,
+                            _desc_recompra(op_id, codigo, tipo, op["status"]),
+                        )
+                        stats["recompras"] += 1
+
+                if op["status"] == "EXERCIDA" and not _caixa_opcao_existe(cur, op_id, "exercicio"):
+                    impacto = impacto_exercicio(tipo, float(op["strike"]), int(op["quantidade"]))
+                    data_f = str(op.get("data_fechamento") or data_ab)
+                    _registrar_movimento_caixa(
+                        cur,
+                        data_f,
+                        impacto["tipo"],
+                        impacto["valor"],
+                        _desc_exercicio(op_id, codigo, impacto),
+                    )
+                    stats["exercicios"] += 1
+
+    if any(stats.values()):
+        st.cache_data.clear()
+    return stats
+
+
+def impacto_exercicio(tipo: str, strike: float, quantidade: int) -> dict[str, Any]:
+    """Describe the cash impact of exercising an option.
+
+    PUT exercised  → buy shares at strike  → SAIDA
+    CALL exercised → sell shares at strike → ENTRADA
+    """
+    valor = strike * quantidade
+    if tipo == "PUT":
+        return {"tipo": "SAIDA", "valor": valor, "descricao": "Compra por exercício de PUT"}
+    return {"tipo": "ENTRADA", "valor": valor, "descricao": "Venda por exercício de CALL"}
+
+
 # ---------------------------------------------------------------------------
 # Schema initialisation
 # ---------------------------------------------------------------------------
@@ -128,6 +308,7 @@ def init_db() -> None:
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(_DDL)
+    sincronizar_caixa_opcoes()
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +425,7 @@ def inserir_opcao(
             (data_abertura, tipo, ativo, codigo_opcao, strike, vencimento,
              quantidade, premio_unitario, premio_total, status, observacao)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ABERTA', %s)
-    """
-    sql_cx = """
-        INSERT INTO caixa (data, tipo, valor, descricao)
-        VALUES (%s, 'ENTRADA', %s, %s)
+        RETURNING id
     """
     with _conn() as con:
         with con.cursor() as cur:
@@ -258,11 +436,14 @@ def inserir_opcao(
                     quantidade, premio_unitario, premio_total, observacao,
                 ),
             )
-            cur.execute(sql_cx, (
+            opcao_id = cur.fetchone()[0]
+            _registrar_movimento_caixa(
+                cur,
                 data_abertura,
+                "ENTRADA",
                 premio_total,
-                f"Prêmio recebido — {codigo_opcao.upper()} {tipo}",
-            ))
+                _desc_premio(opcao_id, codigo_opcao, tipo),
+            )
     st.cache_data.clear()
 
 
@@ -328,23 +509,49 @@ def fechar_opcao(
         UPDATE opcoes
            SET status = %s, data_fechamento = %s, premio_recompra = %s
          WHERE id = %s
-        RETURNING codigo_opcao, tipo, quantidade
+        RETURNING codigo_opcao, tipo, quantidade, strike
     """
+    if status == "EXERCIDA":
+        premio_recompra = 0.0
+
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(sql_up, (status, data_fechamento, premio_recompra, opcao_id))
             row = cur.fetchone()
-            # Register buyback cost as cash outflow when premium > 0
-            if premio_recompra > 0 and row:
-                codigo, tipo_op, qtd = row
-                custo = premio_recompra * qtd
-                cur.execute(
-                    "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'SAIDA', %s, %s)",
-                    (
-                        data_fechamento,
-                        custo,
-                        f"Recompra — {(codigo or '').upper()} {tipo_op} ({status})",
-                    ),
+            if not row:
+                return
+
+            codigo, tipo_op, qtd, strike = row
+
+            if premio_recompra > 0:
+                custo_recompra = premio_recompra * qtd
+                _validar_saida(
+                    cur,
+                    custo_recompra,
+                    f"recompra de {(codigo or '').upper()} {tipo_op}",
+                )
+                _registrar_movimento_caixa(
+                    cur,
+                    data_fechamento,
+                    "SAIDA",
+                    custo_recompra,
+                    _desc_recompra(opcao_id, codigo or "", tipo_op, status),
+                )
+
+            if status == "EXERCIDA":
+                impacto = impacto_exercicio(tipo_op, strike, qtd)
+                if impacto["tipo"] == "SAIDA":
+                    _validar_saida(
+                        cur,
+                        impacto["valor"],
+                        f"exercício de PUT {(codigo or '').upper()}",
+                    )
+                _registrar_movimento_caixa(
+                    cur,
+                    data_fechamento,
+                    impacto["tipo"],
+                    impacto["valor"],
+                    _desc_exercicio(opcao_id, codigo or "", impacto),
                 )
     st.cache_data.clear()
 
@@ -405,16 +612,20 @@ def rolar_opcao(
             cur.execute(close_sql, (data_fechamento, premio_recompra, opcao_id))
             row_orig = cur.fetchone()
 
-            # Cash outflow: buyback of the old option
             if premio_recompra > 0 and row_orig:
                 cod_orig, tipo_orig, qtd_orig = row_orig
-                cur.execute(
-                    "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'SAIDA', %s, %s)",
-                    (
-                        data_fechamento,
-                        premio_recompra * qtd_orig,
-                        f"Recompra (roll) — {(cod_orig or '').upper()} {tipo_orig}",
-                    ),
+                custo_roll = premio_recompra * qtd_orig
+                _validar_saida(
+                    cur,
+                    custo_roll,
+                    f"recompra no roll de {(cod_orig or '').upper()} {tipo_orig}",
+                )
+                _registrar_movimento_caixa(
+                    cur,
+                    data_fechamento,
+                    "SAIDA",
+                    custo_roll,
+                    _desc_recompra(opcao_id, cod_orig or "", tipo_orig, "ROLADA"),
                 )
 
             cur.execute(
@@ -427,14 +638,12 @@ def rolar_opcao(
             )
             new_id = cur.fetchone()[0]
 
-            # Cash inflow: premium received for the new option
-            cur.execute(
-                "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, 'ENTRADA', %s, %s)",
-                (
-                    data_fechamento,
-                    premio_novo_total,
-                    f"Prêmio recebido (roll) — {codigo_opcao.upper()} {tipo}",
-                ),
+            _registrar_movimento_caixa(
+                cur,
+                data_fechamento,
+                "ENTRADA",
+                premio_novo_total,
+                _desc_premio(new_id, codigo_opcao, tipo, roll=True),
             )
 
     st.cache_data.clear()
@@ -476,12 +685,13 @@ def inserir_aporte(
     bova11_qtd, bova11_valor : float
         Shares bought and BRL invested in BOVA11.
     ivvb11_qtd, ivvb11_valor : float
-        Shares and BRL for IVVB11.
+        Shares and BRL for IVV (NYSE ETF).
     hash11_qtd, hash11_valor : float
         Shares and BRL for HASH11.
     observacao : str
         Free-text note.
     """
+    valor_investido = bova11_valor + ivvb11_valor + hash11_valor
     sql = """
         INSERT INTO aportes
             (data, valor_total,
@@ -503,6 +713,17 @@ def inserir_aporte(
                     observacao,
                 ),
             )
+            _registrar_movimento_caixa(
+                cur, data, "ENTRADA", valor_total, f"Aporte recebido — R$ {valor_total:,.2f}",
+            )
+            if valor_investido > 0:
+                _registrar_movimento_caixa(
+                    cur,
+                    data,
+                    "SAIDA",
+                    valor_investido,
+                    "Aporte investido em ETFs",
+                )
     st.cache_data.clear()
 
 
@@ -546,28 +767,30 @@ def registrar_caixa(data: str, tipo: str, valor: float, descricao: str = "") -> 
     """
     with _conn() as con:
         with con.cursor() as cur:
-            cur.execute(
-                "INSERT INTO caixa (data, tipo, valor, descricao) VALUES (%s, %s, %s, %s)",
-                (data, tipo, valor, descricao),
-            )
+            if tipo == "SAIDA":
+                _validar_saida(cur, valor, descricao or "saída manual de caixa")
+            _registrar_movimento_caixa(cur, data, tipo, valor, descricao)
     st.cache_data.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def listar_caixa(limit: int = 30) -> list[dict[str, Any]]:
-    """Return the most recent cash entries.
+def listar_caixa(limit: int | None = 30) -> list[dict[str, Any]]:
+    """Return cash ledger entries (most recent first).
 
     Parameters
     ----------
-    limit : int
-        Max rows to return.
+    limit : int or None
+        Max rows to return. ``None`` returns all rows.
     """
     with _conn() as con:
         with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "SELECT * FROM caixa ORDER BY data DESC, criado_em DESC LIMIT %s",
-                (limit,),
-            )
+            if limit is None:
+                cur.execute("SELECT * FROM caixa ORDER BY data DESC, criado_em DESC")
+            else:
+                cur.execute(
+                    "SELECT * FROM caixa ORDER BY data DESC, criado_em DESC LIMIT %s",
+                    (limit,),
+                )
             return [dict(r) for r in cur.fetchall()]
 
 

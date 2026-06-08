@@ -175,7 +175,7 @@ else:
 st.divider()
 
 # ---------------------------------------------------------------------------
-# IVVB11 and HASH11
+# IVV and HASH11
 # ---------------------------------------------------------------------------
 st.subheader("Outros ETFs")
 ce, cf = st.columns(2)
@@ -258,10 +258,6 @@ st.markdown(
 
 st.caption(
     f"Decisão baseada na MA{MA_PERIODO}. Referências visuais: MA{', MA'.join(str(j) for j in MA_VISUALIZACAO)}. "
-    f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — {time.strftime('%d/%m/%Y %H:%M')}."
-)
-
-st.caption(
-    f"Decisão baseada na MA{MA_PERIODO}. Referências visuais: MA{', MA'.join(str(j) for j in MA_VISUALIZACAO)}. "
-    f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — acesse **Carteira** para gerir posições."
+    f"Atualização a cada {REFRESH_INTERVAL_SECONDS // 60} min — {time.strftime('%d/%m/%Y %H:%M')}. "
+    "Acesse **Carteira** para gerir posições e caixa."
 )

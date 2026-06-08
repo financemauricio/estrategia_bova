@@ -1,4 +1,4 @@
-"""Análise Semanal — 5-step checklist and BOVA11 + MA200 chart."""
+"""Análise Semanal — 5-step checklist and BOVA11 chart with decision MA."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ rec = resultado["recomendacao"]
 st.divider()
 
 # ---------------------------------------------------------------------------
-# BOVA11 chart with MA200
+# BOVA11 chart with decision MA + visual references
 # ---------------------------------------------------------------------------
 st.subheader(f"BOVA11 — Preço com MA{MA_PERIODO} (decisão) + referências (3 meses)")
 
