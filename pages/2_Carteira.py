@@ -529,10 +529,6 @@ if _perf is None:
     )
 else:
     _res = _perf["resumo"]
-    st.caption(
-        f"Desde **{_res['data_inicio'].strftime('%d/%m/%Y')}** · "
-        f"Patrimônio atual: **R$ {_res['patrimonio_atual']:,.2f}**"
-    )
     _m1, _m2, _m3, _m4 = st.columns(4)
     _m1.metric("Carteira", f"{_res['carteira_pct']:+.2f} %")
     _alphas_ord = list(_res["alphas"].items())
@@ -557,8 +553,9 @@ else:
     ]
     st.dataframe(pd.DataFrame(_alpha_rows), use_container_width=True, hide_index=True)
     st.caption(
-        "IBOV via BOVA11 · IVV = S&P 500 em USD convertido para BRL · "
-        "Benchmark 70/20/10 = composição alvo. Prêmios de opções entram via caixa."
+        f"Desde {_res['data_inicio'].strftime('%d/%m/%Y')} · "
+        f"Patrimônio R$ {_res['patrimonio_atual']:,.2f} · "
+        "IBOV = BOVA11 · IVV em BRL · Benchmark 70/20/10 = alvo da estratégia."
     )
 
 st.divider()

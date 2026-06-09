@@ -304,14 +304,19 @@ def grafico_performance(retornos: pd.DataFrame) -> go.Figure:
         ))
     fig.add_hline(y=0, line_dash="dot", line_color="#555", opacity=0.6)
     fig.update_layout(
-        title="Rendimento acumulado desde a montagem da carteira",
         xaxis_title="Data",
         yaxis_title="Retorno acumulado (%)",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=420,
-        margin=dict(t=40, b=20),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.18,
+            x=0,
+            xanchor="left",
+        ),
+        height=400,
+        margin=dict(t=20, b=80, l=20, r=20),
         hovermode="x unified",
     )
     fig.update_yaxes(ticksuffix="%")
