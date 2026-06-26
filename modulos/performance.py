@@ -182,6 +182,7 @@ def _fluxos_externos(
     index: pd.Index,
     aportes: list[dict],
     caixa: list[dict],
+    posicoes: list[dict],
 ) -> pd.Series:
     """Return dated external flows: contributions positive, withdrawals negative."""
     fluxos = pd.Series(0.0, index=index)
@@ -211,6 +212,30 @@ def _fluxos_externos(
         data_mov = _to_date(mov["data"])
         sinal = 1.0 if mov["tipo"] == "ENTRADA" else -1.0
         add_fluxo(data_mov, sinal * float(mov["valor"]))
+
+    qtd_aportes = {t: 0.0 for t in TICKERS}
+    for ap in aportes:
+        qtd_aportes["BOVA11"] += float(ap.get("bova11_qtd") or 0)
+        qtd_aportes["IVV"] += float(ap.get("ivvb11_qtd") or 0)
+        qtd_aportes["HASH11"] += float(ap.get("hash11_qtd") or 0)
+
+    for pos in posicoes:
+        ticker = pos.get("ticker")
+        quantidade = float(pos.get("quantidade") or 0)
+        missing_qtd = max(0.0, quantidade - qtd_aportes.get(ticker, 0.0))
+        if missing_qtd <= 0:
+            continue
+        custo = float(pos.get("custo_total") or 0)
+        if custo <= 0:
+            custo = quantidade * float(pos.get("preco_medio") or 0)
+        elif quantidade > 0:
+            custo = custo * (missing_qtd / quantidade)
+        if custo <= 0:
+            continue
+        data_pos = _to_date(
+            pos.get("data_entrada") or pos.get("atualizado_em") or dt.date.today()
+        )
+        add_fluxo(data_pos, custo)
 
     return fluxos
 
@@ -360,7 +385,7 @@ def _calcular_performance(
     if patrimonio.empty or patrimonio.max() <= 0:
         return None
 
-    fluxos_externos = _fluxos_externos(patrimonio.index, aportes, caixa)
+    fluxos_externos = _fluxos_externos(patrimonio.index, aportes, caixa, posicoes)
     cotas = _serie_cotas(patrimonio, fluxos_externos)
     if cotas.empty:
         return None
