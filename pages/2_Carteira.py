@@ -531,9 +531,9 @@ else:
     _res = _perf["resumo"]
     _m1, _m2, _m3, _m4 = st.columns(4)
     _m1.metric(
-        "Cota do fundo",
+        "Retorno sobre capital investido",
         f"{_res['carteira_pct']:+.2f} %",
-        help="Retorno acumulado da cota. Aportes emitem cotas e não contam como lucro.",
+        help="Retorno acumulado sobre o capital investido. Aportes são tratados como fluxos de capital, não como lucro.",
     )
     _alphas_ord = list(_res["alphas"].items())
     for _col, (_bench, _alpha) in zip((_m2, _m3, _m4), _alphas_ord[:3]):
@@ -546,8 +546,8 @@ else:
     _fig_perf = performance.grafico_performance(_perf["retornos"])
     st.plotly_chart(_fig_perf, use_container_width=True)
     _c1, _c2, _c3 = st.columns(3)
-    _c1.metric("Valor da cota", f"R$ {_res['valor_cota']:,.4f}")
-    _c2.metric("Cotas emitidas", f"{_res['total_cotas']:,.4f}")
+    _c1.metric("Capital investido", f"R$ {_res['fluxos_externos']:,.2f}")
+    _c2.metric("Patrimônio atual", f"R$ {_res['patrimonio_atual']:,.2f}")
     _c3.metric("Fluxo externo líquido", f"R$ {_res['fluxos_externos']:,.2f}")
     _alpha_rows = [
         {
@@ -564,7 +564,7 @@ else:
         f"Desde {_res['data_inicio'].strftime('%d/%m/%Y')} · "
         f"Patrimônio R$ {_res['patrimonio_atual']:,.2f} · "
         "IBOV = BOVA11 · IVV em BRL · Benchmark 70/20/10 = alvo da estratégia. "
-        "A performance da carteira é calculada por valor de cota; aportes e resgates apenas emitem ou resgatam cotas."
+        "A performance da carteira é calculada sobre o capital investido, tratando aportes como fluxo de capital."
     )
 
 st.divider()
