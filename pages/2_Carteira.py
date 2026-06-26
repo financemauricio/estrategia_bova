@@ -531,9 +531,9 @@ else:
     _res = _perf["resumo"]
     _m1, _m2, _m3, _m4 = st.columns(4)
     _m1.metric(
-        "Carteira (liquida de aportes)",
+        "Cota do fundo",
         f"{_res['carteira_pct']:+.2f} %",
-        help="Retorno acumulado sobre o capital aportado, sem contar o aporte como lucro.",
+        help="Retorno acumulado da cota. Aportes emitem cotas e não contam como lucro.",
     )
     _alphas_ord = list(_res["alphas"].items())
     for _col, (_bench, _alpha) in zip((_m2, _m3, _m4), _alphas_ord[:3]):
@@ -545,6 +545,10 @@ else:
         )
     _fig_perf = performance.grafico_performance(_perf["retornos"])
     st.plotly_chart(_fig_perf, use_container_width=True)
+    _c1, _c2, _c3 = st.columns(3)
+    _c1.metric("Valor da cota", f"R$ {_res['valor_cota']:,.4f}")
+    _c2.metric("Cotas emitidas", f"{_res['total_cotas']:,.4f}")
+    _c3.metric("Fluxo externo líquido", f"R$ {_res['fluxos_externos']:,.2f}")
     _alpha_rows = [
         {
             "Referência": bench,
@@ -560,7 +564,7 @@ else:
         f"Desde {_res['data_inicio'].strftime('%d/%m/%Y')} · "
         f"Patrimônio R$ {_res['patrimonio_atual']:,.2f} · "
         "IBOV = BOVA11 · IVV em BRL · Benchmark 70/20/10 = alvo da estratégia. "
-        "A performance da carteira é calculada sobre o capital aportado, não sobre o aporte em si."
+        "A performance da carteira é calculada por valor de cota; aportes e resgates apenas emitem ou resgatam cotas."
     )
 
 st.divider()
@@ -575,6 +579,8 @@ with st.expander("📊 Posições ETF e Alocação"):
             ticker     = pos["ticker"]
             qtd_pos    = pos["quantidade"]
             pm_brl     = pos["preco_medio"]
+            data_ent   = pos.get("data_entrada") or "—"
+            custo_pos  = pos.get("custo_total") or (qtd_pos * pm_brl)
             d_pos      = dados.get(ticker, {})
             preco_usd  = d_pos.get("preco", 0.0)
             preco_brl_ = d_pos.get("preco_brl", preco_usd)
@@ -592,10 +598,12 @@ with st.expander("📊 Posições ETF e Alocação"):
             sinal_ = "+" if var_pm >= 0 else ""
             _rows_etf.append({
                 "Ticker": ticker,
+                "Entrada": str(data_ent),
                 "Qtd":    f"{qtd_pos:.4f}".rstrip("0").rstrip("."),
                 "Preço Pago":  pm_disp,
                 "Preço Atual": pr_disp,
                 "Variação":    f"{sinal_}{var_pm*100:.2f} %",
+                "Custo (R$)":  f"R$ {custo_pos:,.2f}",
                 "Valor (R$)":  f"R$ {valor_brl_:,.2f}",
             })
         df_etf = pd.DataFrame(_rows_etf)
@@ -650,16 +658,34 @@ with st.expander("📊 Posições ETF e Alocação"):
 
     st.markdown("**Registrar / Atualizar Posição ETF**")
     with st.form("form_posicao", clear_on_submit=True):
-        pa, pb, pc = st.columns(3)
+        pa, pb, pc, pd_col = st.columns(4)
         _tk_sel = pa.selectbox("Ticker", list(ALOCACAO_ALVO.keys()))
-        _qtd_p  = pb.number_input("Quantidade total de cotas", min_value=0.0, step=1.0, format="%.4f")
+        _pos_atual = next((p for p in posicoes if p["ticker"] == _tk_sel), {})
+        _qtd_default = float(_pos_atual.get("quantidade") or 0.0)
+        _pm_default_brl = float(_pos_atual.get("preco_medio") or 0.0)
         _is_ivv = _tk_sel == "IVV"
         _pm_lbl = "Preço médio (US$) — será convertido para R$" if _is_ivv else "Preço médio (R$)"
-        _pm_raw = pc.number_input(_pm_lbl, min_value=0.0, step=0.01, format="%.4f")
         _usd_now = dados.get("IVV", {}).get("usdbrl", 1.0) if _is_ivv else 1.0
+        _pm_default = _pm_default_brl / _usd_now if _is_ivv and _usd_now else _pm_default_brl
+        _data_default = _pos_atual.get("data_entrada") or hoje
+        if isinstance(_data_default, str):
+            _data_default = datetime.date.fromisoformat(_data_default)
+        _qtd_p  = pb.number_input("Quantidade total de cotas", min_value=0.0, value=_qtd_default, step=1.0, format="%.4f")
+        _pm_raw = pc.number_input(_pm_lbl, min_value=0.0, value=float(_pm_default), step=0.01, format="%.4f")
+        _data_pos = pd_col.date_input("Data de entrada", value=_data_default, help="Data econômica em que essa posição passou a fazer parte da carteira.")
         _pm_brl_ = _pm_raw * _usd_now if _is_ivv else _pm_raw
+        _custo_calc = _qtd_p * _pm_brl_
+        _custo_default = float(_pos_atual.get("custo_total") or _custo_calc)
+        _custo_total = st.number_input(
+            "Custo total da posição (R$)",
+            min_value=0.0,
+            value=_custo_default,
+            step=100.0,
+            format="%.2f",
+            help="Capital originalmente usado para montar a posição inicial. Importante para performance por cota.",
+        )
         if st.form_submit_button("Salvar posição"):
-            banco.upsert_posicao(_tk_sel, _qtd_p, _pm_brl_)
+            banco.upsert_posicao(_tk_sel, _qtd_p, _pm_brl_, str(_data_pos), _custo_total)
             st.success(f"Posição de {_tk_sel} atualizada.")
             st.rerun()
 
@@ -667,7 +693,8 @@ with st.expander("📊 Posições ETF e Alocação"):
 with st.expander("💵 Caixa e Movimentações"):
     st.caption(
         "Prêmios de opções entram automaticamente. Recompras e exercícios de PUT saem do caixa. "
-        "Aportes creditam o valor recebido e debitam o que foi investido em ETFs."
+        "Aportes creditam o valor recebido e debitam o que foi investido em ETFs. "
+        "Para fluxo externo manual, use depósito, saque ou resgate na descrição."
     )
     _ck1, _ck2, _ck3 = st.columns(3)
     _ck1.metric("Saldo total", f"R$ {saldo:,.2f}")

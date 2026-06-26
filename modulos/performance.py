@@ -1,8 +1,8 @@
-"""Portfolio performance vs benchmark indices (IBOV/BOVA11, IVV, HASH11).
+"""Fund-style performance vs benchmark indices (IBOV/BOVA11, IVV, HASH11).
 
-Reconstructs daily portfolio value from aportes, caixa ledger and ETF
-positions, then compares cumulative returns (%) against each benchmark
-normalised to the same start date.
+Reconstructs daily net asset value from dated cash and position events, then
+calculates fund performance through a quota/NAV series. External flows issue or
+redeem quotas; internal activity changes NAV.
 """
 
 from __future__ import annotations
@@ -42,16 +42,16 @@ def _data_inicio_carteira(
 ) -> dt.date | None:
     """Return the date the portfolio was assembled (ETF holdings in place).
 
-    Priority: first ETF position → first aporte → earliest ledger event.
-    Cash-only days before ETFs are excluded so returns are not distorted.
+    Uses the first dated economic event available.
     """
+    datas: list[dt.date] = []
     if posicoes:
-        return min(
-            _to_date(p.get("atualizado_em") or dt.date.today()) for p in posicoes
+        datas.extend(
+            _to_date(p.get("data_entrada") or p.get("atualizado_em") or dt.date.today())
+            for p in posicoes
         )
     if aportes:
-        return min(_to_date(a["data"]) for a in aportes)
-    datas: list[dt.date] = []
+        datas.extend(_to_date(a["data"]) for a in aportes)
     for c in caixa:
         datas.append(_to_date(c["data"]))
     for o in opcoes:
@@ -107,7 +107,7 @@ def _reconstruir_patrimonio(
     caixa: list[dict],
     posicoes: list[dict],
 ) -> pd.Series:
-    """Simulate daily portfolio value (ETFs mark-to-market + cash)."""
+    """Simulate daily fund net asset value (ETFs mark-to-market + cash)."""
     if precos.empty:
         return pd.Series(dtype=float)
 
@@ -124,35 +124,34 @@ def _reconstruir_patrimonio(
 
     for ap in sorted(aportes, key=lambda x: _to_date(x["data"])):
         d = _to_date(ap["data"])
-        eventos.append((d, "aporte_caixa", float(ap["valor_total"]), None))
-        investido = (
-            float(ap.get("bova11_valor") or 0)
-            + float(ap.get("ivvb11_valor") or 0)
-            + float(ap.get("hash11_valor") or 0)
-        )
-        if investido > 0:
-            eventos.append((d, "aporte_invest", -investido, {
+        qtds = {
                 "BOVA11": float(ap.get("bova11_qtd") or 0),
                 "IVV":    float(ap.get("ivvb11_qtd") or 0),
                 "HASH11": float(ap.get("hash11_qtd") or 0),
-            }))
+        }
+        if any(qtds.values()):
+            # Cash entry and investment outflow are already in caixa. Here we
+            # only add the acquired ETF quantities to avoid counting flows twice.
+            eventos.append((d, "aporte_qtd", 0.0, qtds))
 
     # Positions registered manually (no matching aporte rows)
     if posicoes:
-        pos_date = min(_to_date(p.get("atualizado_em") or dt.date.today()) for p in posicoes)
         holdings = {p["ticker"]: float(p["quantidade"]) for p in posicoes}
         qtd_aportes = {t: 0.0 for t in TICKERS}
         for ap in aportes:
             qtd_aportes["BOVA11"] += float(ap.get("bova11_qtd") or 0)
             qtd_aportes["IVV"]    += float(ap.get("ivvb11_qtd") or 0)
             qtd_aportes["HASH11"] += float(ap.get("hash11_qtd") or 0)
-        missing_holdings = {
-            t: max(0.0, holdings.get(t, 0.0) - qtd_aportes.get(t, 0.0))
-            for t in TICKERS
-        }
-        if any(missing_holdings.values()):
+        for pos in posicoes:
+            ticker = pos["ticker"]
+            missing = max(0.0, holdings.get(ticker, 0.0) - qtd_aportes.get(ticker, 0.0))
+            if missing <= 0:
+                continue
+            pos_date = _to_date(
+                pos.get("data_entrada") or pos.get("atualizado_em") or dt.date.today()
+            )
             # Add holdings that were not reconstructed from aportes.
-            eventos.append((pos_date, "posicao_inicial", 0.0, missing_holdings))
+            eventos.append((pos_date, "posicao_inicial", 0.0, {ticker: missing}))
 
     eventos.sort(key=lambda x: x[0])
     ev_idx = 0
@@ -162,14 +161,9 @@ def _reconstruir_patrimonio(
         d = dia.date() if hasattr(dia, "date") else dia
         while ev_idx < len(eventos) and eventos[ev_idx][0] <= d:
             _, tipo, valor, extra = eventos[ev_idx]
-            if tipo == "aporte_invest" and extra:
-                cash += valor
+            if tipo in ("aporte_qtd", "posicao_inicial") and extra:
                 for t, dq in extra.items():
                     qtd[t] = qtd.get(t, 0.0) + dq
-            elif tipo == "posicao_inicial" and extra:
-                cash += valor
-                for t, dq in extra.items():
-                    qtd[t] = dq
             else:
                 cash += valor
             ev_idx += 1
@@ -184,76 +178,128 @@ def _reconstruir_patrimonio(
     return pd.Series(valores, index=precos.index, name="Carteira")
 
 
-def _retorno_acumulado(series: pd.Series) -> pd.Series:
-    """Normalise a price/value series to cumulative return (%) from first valid point."""
-    s = series.dropna()
-    if s.empty:
-        return s
-    base = float(s.iloc[0])
-    if base <= 0:
-        positivo = s[s > 0]
-        if positivo.empty:
-            return pd.Series(0.0, index=s.index)
-        base = float(positivo.iloc[0])
-        s = s[s.index >= positivo.index[0]]
-    return (s / base - 1.0) * 100.0
-
-
-def _retorno_sobre_aportes(
-    patrimonio: pd.Series,
+def _fluxos_externos(
+    index: pd.Index,
     aportes: list[dict],
     caixa: list[dict],
 ) -> pd.Series:
-    """Compute portfolio return relative to total contributed capital.
+    """Return dated external flows: contributions positive, withdrawals negative."""
+    fluxos = pd.Series(0.0, index=index)
 
-    This prevents contributions from being counted as performance gains.
-    """
-    if not aportes and not caixa:
-        return _retorno_acumulado(patrimonio)
+    def add_fluxo(data_evento: dt.date, valor: float) -> None:
+        elegiveis = fluxos.index[fluxos.index.date >= data_evento]
+        if len(elegiveis) == 0:
+            return
+        fluxos.loc[elegiveis[0]] += valor
 
-    contribuicoes = pd.Series(0.0, index=patrimonio.index)
     for ap in sorted(aportes, key=lambda x: _to_date(x["data"])):
         data_ap = _to_date(ap["data"])
         valor_total = float(ap["valor_total"])
         if valor_total <= 0:
             continue
-        contribuicoes.loc[contribuicoes.index.date >= data_ap] += valor_total
+        add_fluxo(data_ap, valor_total)
 
     for mov in sorted(caixa, key=lambda x: _to_date(x["data"])):
-        if mov["tipo"] != "ENTRADA":
-            continue
         descricao = str(mov.get("descricao") or "").lower()
-        if "aporte" in descricao and "aporte recebido" not in descricao:
-            data_caixa = _to_date(mov["data"])
-            contribuicoes.loc[contribuicoes.index.date >= data_caixa] += float(mov["valor"])
+        if any(tag in descricao for tag in ("prêmio", "premio", "recompra", "exercício", "exercicio", "aporte investido")):
+            continue
+        if "aporte recebido" in descricao:
+            continue
+        is_external = any(tag in descricao for tag in ("deposito", "depósito", "saque", "resgate"))
+        if not is_external:
+            continue
+        data_mov = _to_date(mov["data"])
+        sinal = 1.0 if mov["tipo"] == "ENTRADA" else -1.0
+        add_fluxo(data_mov, sinal * float(mov["valor"]))
 
-    valido = contribuicoes > 0
-    if not valido.any():
-        return _retorno_acumulado(patrimonio)
+    return fluxos
 
-    retorno = pd.Series(index=patrimonio.index, dtype=float)
-    retorno[valido] = (
-        (patrimonio[valido] - contribuicoes[valido])
-        / contribuicoes[valido]
-        * 100.0
-    )
-    return retorno.dropna()
+
+def _serie_cotas(
+    patrimonio: pd.Series,
+    fluxos_externos: pd.Series,
+    cota_inicial: float = 100.0,
+) -> pd.DataFrame:
+    """Build a fund quota series where external flows issue/redeem quotas."""
+    pl = patrimonio.dropna()
+    positivo = pl[pl > 0]
+    if positivo.empty:
+        return pd.DataFrame(index=patrimonio.index)
+
+    inicio = positivo.index[0]
+    pl = pl[pl.index >= inicio]
+    fluxos = fluxos_externos.reindex(pl.index).fillna(0.0)
+
+    cotas = float(pl.iloc[0]) / cota_inicial
+    valor_cota = cota_inicial
+    rows: list[dict[str, float]] = []
+
+    for dia, pl_dia in pl.items():
+        fluxo = float(fluxos.loc[dia])
+        if dia != inicio and fluxo and cotas > 0:
+            pl_pre_fluxo = float(pl_dia) - fluxo
+            cota_pre_fluxo = (
+                pl_pre_fluxo / cotas if pl_pre_fluxo > 0 else valor_cota
+            )
+            if cota_pre_fluxo > 0:
+                cotas += fluxo / cota_pre_fluxo
+        if cotas <= 0:
+            cotas = 0.0
+            valor_cota = 0.0
+        else:
+            valor_cota = float(pl_dia) / cotas
+        rows.append({
+            "patrimonio": float(pl_dia),
+            "fluxo_externo": fluxo,
+            "cotas": cotas,
+            "valor_cota": valor_cota,
+            "retorno_cota_pct": (valor_cota / cota_inicial - 1.0) * 100.0,
+        })
+
+    return pd.DataFrame(rows, index=pl.index)
 
 
 def _simular_retornos_por_aportes(
     preco: pd.Series,
     aportes: list[dict],
+    posicoes: list[dict] | None = None,
 ) -> pd.Series:
-    """Simulate benchmark return by investing apported capital on the same dates."""
-    aportes_ordenados = [
+    """Simulate benchmark return by investing external capital on the same dates."""
+    fluxos_ordenados = [
         (_to_date(ap["data"]), float(ap["valor_total"]))
         for ap in sorted(aportes, key=lambda x: _to_date(x["data"]))
         if float(ap["valor_total"]) > 0
     ]
-    if not aportes_ordenados or preco.empty:
+
+    qtd_aportes = {t: 0.0 for t in TICKERS}
+    for ap in aportes:
+        qtd_aportes["BOVA11"] += float(ap.get("bova11_qtd") or 0)
+        qtd_aportes["IVV"] += float(ap.get("ivvb11_qtd") or 0)
+        qtd_aportes["HASH11"] += float(ap.get("hash11_qtd") or 0)
+
+    for pos in posicoes or []:
+        ticker = pos.get("ticker")
+        quantidade = float(pos.get("quantidade") or 0)
+        missing_qtd = max(0.0, quantidade - qtd_aportes.get(ticker, 0.0))
+        if missing_qtd <= 0:
+            continue
+        custo = float(pos.get("custo_total") or 0)
+        if custo <= 0:
+            custo = quantidade * float(pos.get("preco_medio") or 0)
+        elif quantidade > 0:
+            custo = custo * (missing_qtd / quantidade)
+        if custo <= 0:
+            continue
+        fluxos_ordenados.append((
+            _to_date(pos.get("data_entrada") or pos.get("atualizado_em") or dt.date.today()),
+            custo,
+        ))
+
+    fluxos_ordenados.sort(key=lambda x: x[0])
+    if not fluxos_ordenados or preco.empty:
         return pd.Series(dtype=float, index=preco.index)
 
-    aportes_idx = 0
+    fluxo_idx = 0
     total_contrib = 0.0
     shares = 0.0
     valores: list[float] = []
@@ -261,13 +307,13 @@ def _simular_retornos_por_aportes(
 
     for dia in preco.index:
         d = dia.date() if hasattr(dia, "date") else dia
-        while aportes_idx < len(aportes_ordenados) and aportes_ordenados[aportes_idx][0] <= d:
-            amount = aportes_ordenados[aportes_idx][1]
+        while fluxo_idx < len(fluxos_ordenados) and fluxos_ordenados[fluxo_idx][0] <= d:
+            amount = fluxos_ordenados[fluxo_idx][1]
             price = float(preco.loc[dia])
             if price > 0:
                 shares += amount / price
             total_contrib += amount
-            aportes_idx += 1
+            fluxo_idx += 1
 
         valores.append(shares * float(preco.loc[dia]))
         contribuicoes.append(total_contrib)
@@ -314,21 +360,35 @@ def _calcular_performance(
     if patrimonio.empty or patrimonio.max() <= 0:
         return None
 
+    fluxos_externos = _fluxos_externos(patrimonio.index, aportes, caixa)
+    cotas = _serie_cotas(patrimonio, fluxos_externos)
+    if cotas.empty:
+        return None
+
     retornos = pd.DataFrame(index=precos.index)
-    retornos["Carteira"] = _retorno_sobre_aportes(patrimonio, aportes, caixa)
+    retornos["Carteira"] = cotas["retorno_cota_pct"]
 
     for ticker in TICKERS:
         if ticker in precos.columns:
-            retornos[_BENCHMARK_LABELS[ticker]] = _simular_retornos_por_aportes(precos[ticker], aportes)
+            retornos[_BENCHMARK_LABELS[ticker]] = _simular_retornos_por_aportes(
+                precos[ticker], aportes, posicoes
+            )
 
     retornos["Benchmark 70/20/10"] = _benchmark_misto(retornos)
+    retornos = retornos.dropna(how="all")
+    if retornos.empty or "Carteira" not in retornos:
+        return None
 
     ultimo = retornos.iloc[-1]
     carteira_ret = float(ultimo["Carteira"])
+    ultima_cota = cotas.iloc[-1]
     resumo: dict[str, Any] = {
         "carteira_pct": carteira_ret,
         "data_inicio": data_inicio,
         "patrimonio_atual": float(patrimonio.iloc[-1]),
+        "valor_cota": float(ultima_cota["valor_cota"]),
+        "total_cotas": float(ultima_cota["cotas"]),
+        "fluxos_externos": float(cotas["fluxo_externo"].sum()),
         "alphas": {},
     }
     for col in retornos.columns:
@@ -341,6 +401,7 @@ def _calcular_performance(
         "data_inicio": data_inicio,
         "retornos": retornos,
         "patrimonio": patrimonio,
+        "cotas": cotas,
         "resumo": resumo,
     }
 
@@ -356,8 +417,9 @@ def calcular_performance() -> dict[str, Any] | None:
     -------
     dict or None
         - data_inicio : date
-        - retornos    : DataFrame (% cumulative)
+        - retornos    : DataFrame (% cumulative, Carteira = quota return)
         - patrimonio  : Series (BRL)
+        - cotas       : DataFrame with NAV/quota series
         - resumo      : dict of latest return % and alpha vs each benchmark
     """
     from modulos import banco

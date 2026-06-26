@@ -251,6 +251,8 @@ CREATE TABLE IF NOT EXISTS posicoes (
     ticker      TEXT NOT NULL UNIQUE,
     quantidade  REAL NOT NULL DEFAULT 0,
     preco_medio REAL NOT NULL DEFAULT 0,
+    data_entrada DATE,
+    custo_total  REAL,
     atualizado_em TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -275,6 +277,8 @@ CREATE TABLE IF NOT EXISTS opcoes (
 );
 
 -- Migrations: add new columns to existing tables (idempotent)
+ALTER TABLE posicoes ADD COLUMN IF NOT EXISTS data_entrada DATE;
+ALTER TABLE posicoes ADD COLUMN IF NOT EXISTS custo_total REAL;
 ALTER TABLE opcoes ADD COLUMN IF NOT EXISTS premio_recompra REAL DEFAULT 0;
 ALTER TABLE opcoes ADD COLUMN IF NOT EXISTS origem_id INTEGER REFERENCES opcoes(id);
 
@@ -322,7 +326,8 @@ def listar_posicoes() -> list[dict[str, Any]]:
     Returns
     -------
     list[dict]
-        Each dict has keys: id, ticker, quantidade, preco_medio, atualizado_em.
+        Each dict has keys: id, ticker, quantidade, preco_medio,
+        data_entrada, custo_total, atualizado_em.
     """
     with _conn() as con:
         with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -330,7 +335,13 @@ def listar_posicoes() -> list[dict[str, Any]]:
             return [dict(r) for r in cur.fetchall()]
 
 
-def upsert_posicao(ticker: str, quantidade: float, preco_medio: float) -> None:
+def upsert_posicao(
+    ticker: str,
+    quantidade: float,
+    preco_medio: float,
+    data_entrada: str | None = None,
+    custo_total: float | None = None,
+) -> None:
     """Insert or update a position row.
 
     Parameters
@@ -341,18 +352,27 @@ def upsert_posicao(ticker: str, quantidade: float, preco_medio: float) -> None:
         Total shares held.
     preco_medio : float
         Average purchase price per share.
+    data_entrada : str or None
+        Economic entry date for the initial position.
+    custo_total : float or None
+        Total capital originally used to assemble the initial position.
     """
+    if custo_total is None:
+        custo_total = quantidade * preco_medio
     sql = """
-        INSERT INTO posicoes (ticker, quantidade, preco_medio, atualizado_em)
-        VALUES (%s, %s, %s, NOW())
+        INSERT INTO posicoes
+            (ticker, quantidade, preco_medio, data_entrada, custo_total, atualizado_em)
+        VALUES (%s, %s, %s, %s, %s, NOW())
         ON CONFLICT (ticker) DO UPDATE
             SET quantidade    = EXCLUDED.quantidade,
                 preco_medio   = EXCLUDED.preco_medio,
+                data_entrada  = EXCLUDED.data_entrada,
+                custo_total   = EXCLUDED.custo_total,
                 atualizado_em = NOW()
     """
     with _conn() as con:
         with con.cursor() as cur:
-            cur.execute(sql, (ticker, quantidade, preco_medio))
+            cur.execute(sql, (ticker, quantidade, preco_medio, data_entrada, custo_total))
     st.cache_data.clear()
 
 
