@@ -196,6 +196,38 @@ def _retorno_acumulado(series: pd.Series) -> pd.Series:
     return (s / base - 1.0) * 100.0
 
 
+def _retorno_sobre_aportes(
+    patrimonio: pd.Series,
+    aportes: list[dict],
+) -> pd.Series:
+    """Compute portfolio return relative to total contributed capital.
+
+    This prevents contributions from being counted as performance gains.
+    """
+    if not aportes:
+        return _retorno_acumulado(patrimonio)
+
+    contribuicoes = pd.Series(0.0, index=patrimonio.index)
+    for ap in sorted(aportes, key=lambda x: _to_date(x["data"])):
+        data_ap = _to_date(ap["data"])
+        valor_total = float(ap["valor_total"])
+        if valor_total <= 0:
+            continue
+        contribuicoes.loc[contribuicoes.index.date >= data_ap] += valor_total
+
+    valido = contribuicoes > 0
+    if not valido.any():
+        return _retorno_acumulado(patrimonio)
+
+    retorno = pd.Series(index=patrimonio.index, dtype=float)
+    retorno[valido] = (
+        (patrimonio[valido] - contribuicoes[valido])
+        / contribuicoes[valido]
+        * 100.0
+    )
+    return retorno.dropna()
+
+
 def _benchmark_misto(retornos_pct: pd.DataFrame) -> pd.Series:
     """Weighted blend of benchmark returns using ALOCACAO_ALVO weights."""
     blend = pd.Series(0.0, index=retornos_pct.index)
@@ -229,7 +261,7 @@ def _calcular_performance(
         return None
 
     retornos = pd.DataFrame(index=precos.index)
-    retornos["Carteira"] = _retorno_acumulado(patrimonio)
+    retornos["Carteira"] = _retorno_sobre_aportes(patrimonio, aportes)
 
     for ticker in TICKERS:
         if ticker in precos.columns:

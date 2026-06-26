@@ -530,7 +530,11 @@ if _perf is None:
 else:
     _res = _perf["resumo"]
     _m1, _m2, _m3, _m4 = st.columns(4)
-    _m1.metric("Carteira", f"{_res['carteira_pct']:+.2f} %")
+    _m1.metric(
+        "Carteira (liquida de aportes)",
+        f"{_res['carteira_pct']:+.2f} %",
+        help="Retorno acumulado sobre o capital aportado, sem contar o aporte como lucro.",
+    )
     _alphas_ord = list(_res["alphas"].items())
     for _col, (_bench, _alpha) in zip((_m2, _m3, _m4), _alphas_ord[:3]):
         _lbl = _bench.replace("S&P 500 (IVV)", "IVV").replace("IBOV (BOVA11)", "IBOV")
@@ -555,7 +559,8 @@ else:
     st.caption(
         f"Desde {_res['data_inicio'].strftime('%d/%m/%Y')} · "
         f"Patrimônio R$ {_res['patrimonio_atual']:,.2f} · "
-        "IBOV = BOVA11 · IVV em BRL · Benchmark 70/20/10 = alvo da estratégia."
+        "IBOV = BOVA11 · IVV em BRL · Benchmark 70/20/10 = alvo da estratégia. "
+        "A performance da carteira é calculada sobre o capital aportado, não sobre o aporte em si."
     )
 
 st.divider()
