@@ -141,15 +141,18 @@ def _reconstruir_patrimonio(
     if posicoes:
         pos_date = min(_to_date(p.get("atualizado_em") or dt.date.today()) for p in posicoes)
         holdings = {p["ticker"]: float(p["quantidade"]) for p in posicoes}
-        # Only apply implicit purchase if aportes did not already build holdings
         qtd_aportes = {t: 0.0 for t in TICKERS}
         for ap in aportes:
             qtd_aportes["BOVA11"] += float(ap.get("bova11_qtd") or 0)
             qtd_aportes["IVV"]    += float(ap.get("ivvb11_qtd") or 0)
             qtd_aportes["HASH11"] += float(ap.get("hash11_qtd") or 0)
-        if sum(qtd_aportes.values()) < 0.01:
-            # Holdings registered manually — do not debit caixa (may pre-exist the ledger)
-            eventos.append((pos_date, "posicao_inicial", 0.0, holdings))
+        missing_holdings = {
+            t: max(0.0, holdings.get(t, 0.0) - qtd_aportes.get(t, 0.0))
+            for t in TICKERS
+        }
+        if any(missing_holdings.values()):
+            # Add holdings that were not reconstructed from aportes.
+            eventos.append((pos_date, "posicao_inicial", 0.0, missing_holdings))
 
     eventos.sort(key=lambda x: x[0])
     ev_idx = 0
@@ -199,12 +202,13 @@ def _retorno_acumulado(series: pd.Series) -> pd.Series:
 def _retorno_sobre_aportes(
     patrimonio: pd.Series,
     aportes: list[dict],
+    caixa: list[dict],
 ) -> pd.Series:
     """Compute portfolio return relative to total contributed capital.
 
     This prevents contributions from being counted as performance gains.
     """
-    if not aportes:
+    if not aportes and not caixa:
         return _retorno_acumulado(patrimonio)
 
     contribuicoes = pd.Series(0.0, index=patrimonio.index)
@@ -214,6 +218,14 @@ def _retorno_sobre_aportes(
         if valor_total <= 0:
             continue
         contribuicoes.loc[contribuicoes.index.date >= data_ap] += valor_total
+
+    for mov in sorted(caixa, key=lambda x: _to_date(x["data"])):
+        if mov["tipo"] != "ENTRADA":
+            continue
+        descricao = str(mov.get("descricao") or "").lower()
+        if "aporte" in descricao and "aporte recebido" not in descricao:
+            data_caixa = _to_date(mov["data"])
+            contribuicoes.loc[contribuicoes.index.date >= data_caixa] += float(mov["valor"])
 
     valido = contribuicoes > 0
     if not valido.any():
@@ -225,6 +237,48 @@ def _retorno_sobre_aportes(
         / contribuicoes[valido]
         * 100.0
     )
+    return retorno.dropna()
+
+
+def _simular_retornos_por_aportes(
+    preco: pd.Series,
+    aportes: list[dict],
+) -> pd.Series:
+    """Simulate benchmark return by investing apported capital on the same dates."""
+    aportes_ordenados = [
+        (_to_date(ap["data"]), float(ap["valor_total"]))
+        for ap in sorted(aportes, key=lambda x: _to_date(x["data"]))
+        if float(ap["valor_total"]) > 0
+    ]
+    if not aportes_ordenados or preco.empty:
+        return pd.Series(dtype=float, index=preco.index)
+
+    aportes_idx = 0
+    total_contrib = 0.0
+    shares = 0.0
+    valores: list[float] = []
+    contribuicoes: list[float] = []
+
+    for dia in preco.index:
+        d = dia.date() if hasattr(dia, "date") else dia
+        while aportes_idx < len(aportes_ordenados) and aportes_ordenados[aportes_idx][0] <= d:
+            amount = aportes_ordenados[aportes_idx][1]
+            price = float(preco.loc[dia])
+            if price > 0:
+                shares += amount / price
+            total_contrib += amount
+            aportes_idx += 1
+
+        valores.append(shares * float(preco.loc[dia]))
+        contribuicoes.append(total_contrib)
+
+    aporte_series = pd.Series(contribuicoes, index=preco.index)
+    valor_series = pd.Series(valores, index=preco.index)
+
+    valido = aporte_series > 0
+    retorno = pd.Series(index=preco.index, dtype=float)
+    if valido.any():
+        retorno[valido] = (valor_series[valido] / aporte_series[valido] - 1.0) * 100.0
     return retorno.dropna()
 
 
@@ -261,11 +315,11 @@ def _calcular_performance(
         return None
 
     retornos = pd.DataFrame(index=precos.index)
-    retornos["Carteira"] = _retorno_sobre_aportes(patrimonio, aportes)
+    retornos["Carteira"] = _retorno_sobre_aportes(patrimonio, aportes, caixa)
 
     for ticker in TICKERS:
         if ticker in precos.columns:
-            retornos[_BENCHMARK_LABELS[ticker]] = _retorno_acumulado(precos[ticker])
+            retornos[_BENCHMARK_LABELS[ticker]] = _simular_retornos_por_aportes(precos[ticker], aportes)
 
     retornos["Benchmark 70/20/10"] = _benchmark_misto(retornos)
 
