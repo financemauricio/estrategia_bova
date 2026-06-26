@@ -219,6 +219,16 @@ def _fluxos_externos(
         qtd_aportes["IVV"] += float(ap.get("ivvb11_qtd") or 0)
         qtd_aportes["HASH11"] += float(ap.get("hash11_qtd") or 0)
 
+    caixa_disponivel = pd.Series(0.0, index=index)
+    for mov in sorted(caixa, key=lambda x: _to_date(x["data"])):
+        data_mov = _to_date(mov["data"])
+        sinal = 1.0 if mov["tipo"] == "ENTRADA" else -1.0
+        elegiveis = caixa_disponivel.index[caixa_disponivel.index.date >= data_mov]
+        if len(elegiveis) > 0:
+            caixa_disponivel.loc[elegiveis[0]] += sinal * float(mov["valor"])
+    caixa_disponivel = caixa_disponivel.cumsum()
+    caixa_alocado = 0.0
+
     for pos in posicoes:
         ticker = pos.get("ticker")
         quantidade = float(pos.get("quantidade") or 0)
@@ -226,16 +236,27 @@ def _fluxos_externos(
         if missing_qtd <= 0:
             continue
         custo = float(pos.get("custo_total") or 0)
+        data_pos = _to_date(
+            pos.get("data_entrada") or pos.get("atualizado_em") or dt.date.today()
+        )
         if custo <= 0:
             custo = quantidade * float(pos.get("preco_medio") or 0)
         elif quantidade > 0:
             custo = custo * (missing_qtd / quantidade)
         if custo <= 0:
             continue
-        data_pos = _to_date(
-            pos.get("data_entrada") or pos.get("atualizado_em") or dt.date.today()
-        )
-        add_fluxo(data_pos, custo)
+
+        caixa_data = caixa_disponivel.index[caixa_disponivel.index.date >= data_pos]
+        if len(caixa_data) > 0:
+            disponivel = float(caixa_disponivel.loc[caixa_data[0]])
+        else:
+            disponivel = 0.0
+        usado = min(custo, max(0.0, disponivel - caixa_alocado))
+        caixa_alocado += usado
+        net_custo = custo - usado
+        if net_custo <= 0:
+            continue
+        add_fluxo(data_pos, net_custo)
 
     return fluxos
 
