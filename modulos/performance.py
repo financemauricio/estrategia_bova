@@ -285,6 +285,33 @@ def _retorno_sobre_contribuicoes(
     return retorno.dropna()
 
 
+def _calcular_contribuicao_opcoes(caixa: list[dict[str, Any]]) -> dict[str, float]:
+    """Compute realized option cash contribution from the cash ledger."""
+    premios = 0.0
+    recompras = 0.0
+    exercicios = 0.0
+
+    for mov in caixa:
+        desc = str(mov.get("descricao") or "").lower()
+        valor = float(mov.get("valor") or 0.0)
+        tipo = str(mov.get("tipo") or "").upper()
+
+        if "prêmio recebido" in desc or "premio recebido" in desc:
+            premios += valor
+        elif "recompra" in desc:
+            recompras += valor
+        elif "exercício" in desc or "exercicio" in desc:
+            exercicios += valor if tipo == "ENTRADA" else -valor
+
+    liquido = premios - recompras + exercicios
+    return {
+        "premios": round(premios, 2),
+        "recompras": round(recompras, 2),
+        "exercicios": round(exercicios, 2),
+        "liquido": round(liquido, 2),
+    }
+
+
 def _serie_cotas(
     patrimonio: pd.Series,
     fluxos_externos: pd.Series,
@@ -403,6 +430,7 @@ def _calcular_performance(
 
     fluxos_externos = _fluxos_externos(patrimonio.index, aportes, caixa, posicoes)
     contribuicoes = _contribuicoes_acumuladas(fluxos_externos)
+    contrib_opcoes = _calcular_contribuicao_opcoes(caixa)
     retornos = pd.DataFrame(index=precos.index)
     retornos["Carteira"] = _retorno_sobre_contribuicoes(patrimonio, contribuicoes)
 
@@ -419,11 +447,18 @@ def _calcular_performance(
 
     ultimo = retornos.iloc[-1]
     carteira_ret = float(ultimo["Carteira"])
+    capital_investido = float(contribuicoes.iloc[-1]) if not contribuicoes.empty else 0.0
+    opcoes_pct = (contrib_opcoes["liquido"] / capital_investido * 100.0) if capital_investido > 0 else 0.0
     resumo: dict[str, Any] = {
         "carteira_pct": carteira_ret,
         "data_inicio": data_inicio,
         "patrimonio_atual": float(patrimonio.iloc[-1]),
         "fluxos_externos": float(fluxos_externos.sum()),
+        "opcoes_liquido": contrib_opcoes["liquido"],
+        "opcoes_premios": contrib_opcoes["premios"],
+        "opcoes_recompras": contrib_opcoes["recompras"],
+        "opcoes_exercicios": contrib_opcoes["exercicios"],
+        "opcoes_pct": round(opcoes_pct, 2),
         "alphas": {},
     }
     for col in retornos.columns:
