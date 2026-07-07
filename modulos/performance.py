@@ -285,13 +285,29 @@ def _retorno_sobre_contribuicoes(
     return retorno.dropna()
 
 
+def _movimento_eh_opcao_bova(mov: dict[str, Any]) -> bool:
+    """Return True when a cash movement refers to a BOVA-related option."""
+    desc = str(mov.get("descricao") or "").lower()
+    if "bova" in desc:
+        return True
+
+    for key in ("codigo_opcao", "codigo", "ativo", "ticker", "simbolo"):
+        valor = str(mov.get(key) or "").lower()
+        if "bova" in valor:
+            return True
+    return False
+
+
 def _calcular_contribuicao_opcoes(caixa: list[dict[str, Any]]) -> dict[str, float]:
-    """Compute realized option cash contribution from the cash ledger."""
+    """Compute realized option cash contribution from BOVA strategy cash flows."""
     premios = 0.0
     recompras = 0.0
     exercicios = 0.0
 
     for mov in caixa:
+        if not _movimento_eh_opcao_bova(mov):
+            continue
+
         desc = str(mov.get("descricao") or "").lower()
         valor = float(mov.get("valor") or 0.0)
         tipo = str(mov.get("tipo") or "").upper()
