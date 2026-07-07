@@ -449,6 +449,7 @@ def _calcular_performance(
     carteira_ret = float(ultimo["Carteira"])
     capital_investido = float(contribuicoes.iloc[-1]) if not contribuicoes.empty else 0.0
     opcoes_pct = (contrib_opcoes["liquido"] / capital_investido * 100.0) if capital_investido > 0 else 0.0
+    etf_pct = round(carteira_ret - opcoes_pct, 2)
     resumo: dict[str, Any] = {
         "carteira_pct": carteira_ret,
         "data_inicio": data_inicio,
@@ -459,6 +460,7 @@ def _calcular_performance(
         "opcoes_recompras": contrib_opcoes["recompras"],
         "opcoes_exercicios": contrib_opcoes["exercicios"],
         "opcoes_pct": round(opcoes_pct, 2),
+        "etf_pct": etf_pct,
         "alphas": {},
     }
     for col in retornos.columns:

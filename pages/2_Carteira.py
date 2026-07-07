@@ -552,8 +552,17 @@ else:
 
     opcoes_liquido = _res.get("opcoes_liquido", 0.0)
     opcoes_pct = _res.get("opcoes_pct", 0.0)
+    etf_pct = _res.get("etf_pct", 0.0)
     st.metric(
-        "Contribuição líquida de opções",
+        "Retorno do ETF/ativo",
+        f"{etf_pct:+.2f} %",
+        help=(
+            "Estimativa do retorno da parte vinculada aos ETFs/ativos, "
+            "descontando o impacto líquido do caixa das opções."
+        ),
+    )
+    st.metric(
+        "Impacto líquido das opções",
         f"R$ {opcoes_liquido:,.2f}",
         f"{opcoes_pct:+.2f} % do capital investido",
         help=(
