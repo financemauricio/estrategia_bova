@@ -550,10 +550,12 @@ else:
     _c2.metric("Patrimônio atual", f"R$ {_res['patrimonio_atual']:,.2f}")
     _c3.metric("Fluxo externo líquido", f"R$ {_res['fluxos_externos']:,.2f}")
 
+    opcoes_liquido = _res.get("opcoes_liquido", 0.0)
+    opcoes_pct = _res.get("opcoes_pct", 0.0)
     st.metric(
         "Contribuição líquida de opções",
-        f"R$ {_res['opcoes_liquido']:,.2f}",
-        f"{_res['opcoes_pct']:+.2f} % do capital investido",
+        f"R$ {opcoes_liquido:,.2f}",
+        f"{opcoes_pct:+.2f} % do capital investido",
         help=(
             "Prêmios recebidos menos recompras, com impacto de exercícios. "
             "Mostra quanto as opções já contribuíram para o resultado da carteira."
