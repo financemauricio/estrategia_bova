@@ -24,6 +24,21 @@ from config import (
 )
 
 
+def _preservar_ultimo_ohlc_invalido(hist: pd.DataFrame) -> pd.DataFrame:
+    """Keep the last row if only Open/High/Low are zero but Close is valid."""
+    if hist.empty or "Close" not in hist.columns:
+        return hist
+
+    ultimo = hist.index == hist.index[-1]
+    valido = hist["Close"] > 0
+
+    for col_ohlc in ["Open", "High", "Low"]:
+        if col_ohlc in hist.columns:
+            valido &= (hist[col_ohlc] > 0) | (ultimo & (hist["Close"] > 0))
+
+    return hist[valido]
+
+
 # ---------------------------------------------------------------------------
 # USD/BRL exchange rate
 # ---------------------------------------------------------------------------
@@ -94,10 +109,9 @@ def buscar_dados_mercado() -> dict[str, dict]:
 
         hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
-        # Drop rows with any zero OHLC value (partial/corrupt intraday bars)
-        for col_ohlc in ["Open", "High", "Low", "Close"]:
-            if col_ohlc in hist.columns:
-                hist = hist[hist[col_ohlc] > 0]
+        # Drop rows with any zero OHLC value (partial/corrupt intraday bars).
+        # Preserve the final row if it contains only Close and valid Close price.
+        hist = _preservar_ultimo_ohlc_invalido(hist)
         # Drop rows with anomalous daily move > 50 %
         var_diaria = hist["Close"].pct_change().abs()
         hist = hist[(var_diaria < 0.50) | var_diaria.isna()].copy()
@@ -167,9 +181,7 @@ def buscar_dados_ativo_opcao(ticker_b3: str) -> dict:
         if hist.empty or len(hist) < 21:
             continue
         hist.index = pd.to_datetime(hist.index).tz_localize(None)
-        for col_ohlc in ["Open", "High", "Low", "Close"]:
-            if col_ohlc in hist.columns:
-                hist = hist[hist[col_ohlc] > 0]
+        hist = _preservar_ultimo_ohlc_invalido(hist)
         if len(hist) < 21:
             continue
         return {"preco": float(hist["Close"].iloc[-1]), "hist": hist}
