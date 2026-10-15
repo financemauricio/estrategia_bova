@@ -118,6 +118,20 @@ def validar_saida_caixa(saldo: float, valor: float) -> str | None:
     return None
 
 
+def mensagem_erro_banco(erro: Exception | str) -> str:
+    """Standard guidance shown when the database is unreachable."""
+    detalhe = str(erro)[:300] if erro else "sem detalhes"
+    return (
+        "O banco de dados está indisponível.\n\n"
+        f"Detalhe técnico: {detalhe}\n\n"
+        "O que fazer:\n"
+        "1. Abra o Supabase → confira se o projeto está Active (se pausado, dê Restore).\n"
+        "2. Confira a DATABASE_URL nos Secrets do Streamlit Cloud e no "
+        "`.streamlit/secrets.toml` local.\n"
+        "3. No Streamlit Cloud, use Reboot app após corrigir."
+    )
+
+
 def distancia_strike(tipo: str, preco_spot: float, strike: float) -> str:
     """Format % distance from spot price to strike with OTM/ITM label.
 

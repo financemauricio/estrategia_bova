@@ -45,6 +45,15 @@ MA_VISUALIZACAO: list[int] = [50, 100, 200]
 # Fixed monthly contribution amount (BRL)
 APORTE_MENSAL: float = 5_000.0
 
+# PUT sell rule (operate little: 1 PUT/month max)
+# Sell only with delta in this band (~20-30% exercise probability)
+DELTA_PUT_MIN: float = -0.30
+DELTA_PUT_MAX: float = -0.20
+# Minimum bid premium per share — below this, staying out is the position
+PREMIO_MIN_PUT: float = 1.50
+# Max share of cash committed to PUT reserves (strike × qty)
+MAX_COMPROMETIDO_PCT: float = 0.50
+
 # Dashboard auto-refresh interval (seconds)
 REFRESH_INTERVAL_SECONDS: int = 300
 

@@ -25,9 +25,15 @@ st.caption("Use esta tela todo final de semana para revisar a estratégia.")
 # Load data
 # ---------------------------------------------------------------------------
 dados = mercado.buscar_dados_mercado()
-posicoes = banco.listar_posicoes()
-saldo = banco.saldo_caixa()
-opcoes_abertas = banco.listar_opcoes("ABERTA")
+try:
+    posicoes = banco.listar_posicoes()
+    saldo = banco.saldo_caixa()
+    opcoes_abertas = banco.listar_opcoes("ABERTA")
+except Exception as e_db:
+    from modulos.componentes import mensagem_erro_banco
+    st.error("⚠️ Banco indisponível — a Análise Semanal precisa do banco para funcionar.")
+    st.info(mensagem_erro_banco(e_db))
+    st.stop()
 pat = mercado.calcular_patrimonio(posicoes, dados)
 total_etf = pat["total_etf"]
 

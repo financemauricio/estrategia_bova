@@ -100,17 +100,23 @@ st.title("💼 Carteira")
 # ─── Data loading (single block — all queries cached) ─────────────────────────
 
 dados      = mercado.buscar_dados_mercado()
-posicoes   = banco.listar_posicoes()
-saldo      = banco.saldo_caixa()
-abertas    = banco.listar_opcoes("ABERTA")
-todas_op   = banco.listar_opcoes()
-aportes    = banco.listar_aportes()
+try:
+    posicoes   = banco.listar_posicoes()
+    saldo      = banco.saldo_caixa()
+    abertas    = banco.listar_opcoes("ABERTA")
+    todas_op   = banco.listar_opcoes()
+    aportes    = banco.listar_aportes()
+    total_ap   = banco.total_aportado()
+    total_pr   = banco.total_premios_recebidos()
+except Exception as e_db:
+    from modulos.componentes import mensagem_erro_banco
+    st.error("⚠️ Banco indisponível — a Carteira precisa do banco para funcionar.")
+    st.info(mensagem_erro_banco(e_db))
+    st.stop()
 patrimonio = mercado.calcular_patrimonio(posicoes, dados)
 total_etf  = patrimonio["total_etf"]
 pat_total  = total_etf + saldo
 selic      = bs.buscar_selic()
-total_ap   = banco.total_aportado()
-total_pr   = banco.total_premios_recebidos()
 
 # ─── Derived values ───────────────────────────────────────────────────────────
 
@@ -253,9 +259,117 @@ if abertas:
 
     # ── Panel: Nova venda ──────────────────────────────────────────────────
     if st.session_state.acao_opcao == "nova":
+        from config import DELTA_PUT_MAX, DELTA_PUT_MIN, MAX_COMPROMETIDO_PCT, PREMIO_MIN_PUT
+        from modulos import opcoes_b3
+
         st.subheader("📋 Registrar Nova Venda")
+
+        # ── Step 1: pick the series from the live B3 chain (anti-impulse) ──
+        _sug = st.session_state.get("opcao_sugerida") or {}
+        with st.expander("🔎 Buscar série na B3 (código + preço reais)", expanded=not _sug):
+            if not opcoes_b3.token_configurado():
+                st.warning(
+                    "Cadeia automática desligada — sem `BRAPI_TOKEN`. "
+                    "Crie grátis em **brapi.dev**, adicione em `.streamlit/secrets.toml` "
+                    "ou nos Secrets do Cloud, e recarregue. Enquanto isso, digite o código manualmente abaixo."
+                )
+            else:
+                _und = st.text_input("Ativo", value="BOVA11", key="chain_und").upper().strip() or "BOVA11"
+                try:
+                    _vencs = opcoes_b3.buscar_vencimentos(_und)
+                except Exception as e_chain:
+                    if "Pro" in str(e_chain) or "403" in str(e_chain):
+                        _vencs = []
+                        st.info(
+                            "ℹ️ A cadeia automática da brapi exige o plano Pro (pago). "
+                            "Sem custo, o app calcula o **strike exato** para você procurar "
+                            "no Home Broker — veja abaixo."
+                        )
+                    else:
+                        st.error(f"Falha ao buscar vencimentos: {e_chain}")
+                        _vencs = []
+                if not _vencs and opcoes_b3.token_configurado():
+                    # ── Free path: tell exactly what to look for in the broker ──
+                    _spot_f = (dados.get(_und) or {}).get("preco") or 0.0
+                    _hist_f = (dados.get(_und) or {}).get("hist")
+                    _vol_f = None
+                    try:
+                        if _hist_f is not None and len(_hist_f) >= 20:
+                            _vol_f = bs.calcular_vol_historica(_hist_f, janela=20)
+                    except Exception:
+                        pass
+                    if _spot_f and _vol_f:
+                        _dias_f = st.slider("Dias até o vencimento mensal", 15, 60, 30, key="dias_alvo")
+                        _kalvo = opcoes_b3.strike_para_delta(_spot_f, -0.25, _dias_f, selic, _vol_f)
+                        if _kalvo:
+                            st.success(
+                                f"🎯 No Home Broker, procure a **PUT de {_und}** do vencimento mensal "
+                                f"com **strike mais próximo de R$ {_kalvo:.2f}** "
+                                f"(delta ≈ -0,25 | spot R$ {_spot_f:.2f} | {_dias_f} dias)."
+                            )
+                            st.write(
+                                f"✔️ Só venda se o **bid ≥ R$ {PREMIO_MIN_PUT:.2f}** e o spread estiver justo. "
+                                "Copie o código da série e cole no campo abaixo — o resto o app valida."
+                            )
+                if _vencs:
+                    _exp = st.selectbox("Vencimento", _vencs, key="chain_exp")
+                    try:
+                        _cadeia = opcoes_b3.buscar_cadeia(_und, _exp)
+                    except Exception as e_chain:
+                        st.error(f"Falha ao buscar cadeia: {e_chain}")
+                        _cadeia = []
+                    _spot_c = (dados.get(_und) or {}).get("preco") or 0.0
+                    _hist_c = (dados.get(_und) or {}).get("hist")
+                    _vol_c = None
+                    try:
+                        if _hist_c is not None and len(_hist_c) >= 20:
+                            _vol_c = bs.calcular_vol_historica(_hist_c, janela=20)
+                    except Exception:
+                        pass
+                    import datetime as _dtc
+                    _dias_c = max((datetime.date.fromisoformat(_exp) - hoje).days, 1)
+                    if _cadeia and _spot_c and _vol_c:
+                        _puts = opcoes_b3.filtrar_puts_regra(
+                            _cadeia, _spot_c, _dias_c, selic, _vol_c,
+                            DELTA_PUT_MIN, DELTA_PUT_MAX, PREMIO_MIN_PUT,
+                        )[:12]
+                        _rows_c = [{
+                            "✓": "✅" if r["candidata"] else "",
+                            "Código": r["codigo"],
+                            "Strike": f"R$ {r['strike']:.2f}",
+                            "Bid": f"R$ {r['bid']:.2f}" if r.get("bid") else "—",
+                            "Delta": f"{r['delta']:.2f}" if r.get("delta") is not None else "—",
+                            "Vol.": r.get("volume") or 0,
+                        } for r in _puts]
+                        st.dataframe(pd.DataFrame(_rows_c), use_container_width=True, hide_index=True)
+                        st.caption(
+                            "✅ = dentro da regra (delta -0,30…-0,20 e bid ≥ "
+                            f"R$ {PREMIO_MIN_PUT:.2f}). Cotação com atraso (~15 min) — confirme no Home Broker."
+                        )
+                        _cands = [r for r in _puts if r["candidata"]]
+                        if _cands:
+                            _pick = st.selectbox(
+                                "Usar série", [r["codigo"] for r in _cands], key="chain_pick",
+                            )
+                            if st.button("Usar esta série no formulário", key="chain_usar"):
+                                _r = next(r for r in _cands if r["codigo"] == _pick)
+                                st.session_state["opcao_sugerida"] = {
+                                    "codigo": _r["codigo"], "strike": _r["strike"],
+                                    "premio": _r.get("bid") or 0.0, "vencimento": _exp,
+                                }
+                                st.rerun()
+                        else:
+                            st.warning("Nenhuma série dentro da regra neste vencimento — ficar de fora também é posição.")
+                    elif not _cadeia:
+                        st.info("Cadeia vazia para este vencimento.")
+                    else:
+                        st.info("Sem cotação/volatilidade para calcular o delta agora.")
+                elif opcoes_b3.token_configurado():
+                    st.info("Nenhum vencimento retornado para este ativo.")
+
         _cod_prev = st.text_input(
             "Código da opção", placeholder="ex: BOVAR169 ou BOVAR164W1", key="codigo_input",
+            value=_sug.get("codigo", ""),
         ).upper().strip()
         _prs = _parse_codigo(_cod_prev) if _cod_prev else {"ok": False}
         _venc_s = hoje + datetime.timedelta(days=30)
@@ -269,13 +383,41 @@ if abertas:
         elif _cod_prev:
             st.warning("⚠️ Código não reconhecido — verifique a nomenclatura B3.")
 
+        # ── Step 2: anti-impulse checklist (auto checks + 3 confirmations) ──
+        _qtd_prev = 1
+        _strike_prev = float(_sug.get("strike") or 100.0)
+        _premio_prev = float(_sug.get("premio") or 0.0)
+        try:
+            _vdef = datetime.date.fromisoformat(_sug.get("vencimento")) if _sug.get("vencimento") else _venc_s
+        except ValueError:
+            _vdef = _venc_s
+        _bv = dados.get("BOVA11", {})
+        _vies_put = bool(_bv.get("preco") and _bv.get("ma_decisao") and _bv["preco"] < _bv["ma_decisao"])
+        _eh_put = _prs.get("tipo") == "PUT"
+        _premio_ok_a = (not _eh_put) or _premio_prev >= PREMIO_MIN_PUT
+        _puts_abertas_n = sum(1 for o in abertas if o.get("tipo") == "PUT")
+        _reserva_prev = _strike_prev * max(_qtd_prev, 1) if _eh_put else 0.0
+        _caixa_ok_a = (not _eh_put) or (_reserva_prev <= saldo * MAX_COMPROMETIDO_PCT and _puts_abertas_n == 0)
+
+        st.markdown("**Trava anti-impulso — só libera dentro da regra:**")
+        _t1, _t2 = st.columns(2)
+        with _t1:
+            st.write(("✅" if _vies_put or not _eh_put else "❌") + " Viés PUT (BOVA11 abaixo da MA50)" if _eh_put else "ℹ️ Viés exigido só para PUT")
+            st.write(("✅" if _premio_ok_a else "❌") + f" Prêmio ≥ R$ {PREMIO_MIN_PUT:.2f}/cota" if _eh_put else "")
+        with _t2:
+            st.write(("✅" if _caixa_ok_a else "❌") + f" Reserva ≤ {MAX_COMPROMETIDO_PCT*100:.0f}% do caixa e sem outra PUT aberta" if _eh_put else "")
+        _c1 = st.checkbox("Li o preço (bid) no Home Broker e está igual ou melhor", key="ck_hb")
+        _c2 = st.checkbox("Aceito receber as cotas se for exercido — esse é o plano", key="ck_ex")
+        _c3 = st.checkbox("Depois desta venda, fico sem operar até o próximo ciclo", key="ck_ciclo")
+        _auto_ok = (not _eh_put) or (_vies_put and _premio_ok_a and _caixa_ok_a)
+
         with st.form("form_nova", clear_on_submit=True):
             n1, n2, n3 = st.columns(3)
-            strike_n = n1.number_input("Strike (R$)", min_value=1.0, step=0.50, format="%.2f", value=100.0)
-            venc_n   = n2.date_input("Vencimento", value=_venc_s)
+            strike_n = n1.number_input("Strike (R$)", min_value=1.0, step=0.50, format="%.2f", value=_strike_prev)
+            venc_n   = n2.date_input("Vencimento", value=_vdef)
             qtd_n    = n3.number_input("Quantidade", min_value=1, step=1)
             n4, n5 = st.columns([2, 1])
-            premio_n = n4.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f")
+            premio_n = n4.number_input("Prêmio unitário (R$)", min_value=0.0001, step=0.01, format="%.4f", value=_premio_prev)
             obs_n    = n5.text_input("Observação")
             _total_n  = qtd_n * premio_n
             _reserva_n = strike_n * qtd_n if _prs.get("tipo") == "PUT" else 0.0
@@ -291,6 +433,10 @@ if abertas:
             if st.form_submit_button("✅ Registrar venda", use_container_width=True):
                 if not _prs["ok"]:
                     st.error("Informe um código válido antes de registrar.")
+                elif _eh_put and not _auto_ok:
+                    st.error("⛔ Fora da regra — venda bloqueada. Ajuste série, prêmio ou caixa.")
+                elif not (_c1 and _c2 and _c3):
+                    st.error("⛔ Marque as 3 confirmações antes de registrar. O impulso passa, o registro fica.")
                 else:
                     banco.inserir_opcao(
                         data_abertura=str(hoje), tipo=_prs["tipo"], ativo=_prs["ativo"],
@@ -298,6 +444,7 @@ if abertas:
                         quantidade=int(qtd_n), premio_unitario=premio_n, observacao=obs_n,
                     )
                     st.session_state.acao_opcao = None
+                    st.session_state.pop("opcao_sugerida", None)
                     st.success(f"✅ {_prs['tipo']} **{_cod_prev}** registrada — R$ {_total_n:,.2f}")
                     st.rerun()
 

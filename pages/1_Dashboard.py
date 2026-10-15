@@ -42,9 +42,25 @@ st.title("📊 Dashboard")
 with st.spinner("Buscando dados de mercado..."):
     dados = mercado.buscar_dados_mercado()
 
-posicoes = banco.listar_posicoes()
-saldo = banco.saldo_caixa()
-opcoes_abertas = banco.listar_opcoes("ABERTA")
+posicoes: list = []
+saldo: float = 0.0
+opcoes_abertas: list = []
+try:
+    posicoes = banco.listar_posicoes()
+    saldo = banco.saldo_caixa()
+    opcoes_abertas = banco.listar_opcoes("ABERTA")
+except Exception as e_db:
+    from modulos.componentes import mensagem_erro_banco
+    st.error("⚠️ Banco indisponível — mostrando apenas cotações de mercado.")
+    st.info(mensagem_erro_banco(e_db))
+    bava = dados.get("BOVA11", {})
+    if bava.get("preco"):
+        st.metric(
+            "BOVA11",
+            f"R$ {bava['preco']:.2f}",
+            mercado.variacao_fmt(bava.get("variacao_pct", 0.0)),
+        )
+    st.stop()
 patrimonio_calc = mercado.calcular_patrimonio(posicoes, dados)
 total_etf = patrimonio_calc["total_etf"]
 patrimonio_total = total_etf + saldo
