@@ -118,6 +118,29 @@ def _extrair_serie(raw: dict) -> dict | None:
     }
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def buscar_cotacoes(ativos: list[str]) -> dict[str, float]:
+    """Spot prices via brapi free quote endpoint. Returns {ticker: price}."""
+    import requests
+
+    out: dict[str, float] = {}
+    for atv in ativos:
+        try:
+            resp = requests.get(
+                f"{BRAPI_BASE}/api/quote/{atv.upper()}",
+                headers={"Authorization": f"Bearer {_get_token()}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            res = resp.json().get("results", [{}])[0]
+            px = float(res.get("regularMarketPrice") or 0)
+            if px > 0:
+                out[atv.upper()] = px
+        except Exception:
+            continue
+    return out
+
+
 @st.cache_data(ttl=300, show_spinner="Buscando cadeia de opções na B3...")
 def buscar_cadeia(underlying: str = "BOVA11", expiration: str = "") -> list[dict]:
     """Return normalised option series for one expiry date."""

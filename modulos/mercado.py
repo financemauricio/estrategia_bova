@@ -24,6 +24,43 @@ from config import (
 )
 
 
+def corrigir_ultima_barra(hist: pd.DataFrame, spot_brapi: float | None) -> tuple[pd.DataFrame, str]:
+    """Fix a corrupt last bar (zeroed Open/High/Low from yfinance). Pure function.
+
+    - If the last bar is complete, return it unchanged (source 'yfinance').
+    - If corrupt and a sane brapi spot exists (within 5% of previous close),
+      stamp the last bar flat at the brapi price (source 'brapi').
+    - Otherwise drop the corrupt bar and use the previous close (source 'yfinance*').
+    """
+    if hist.empty or "Close" not in hist.columns:
+        return hist, "yfinance"
+    ultima = hist.iloc[-1]
+    completa = True
+    for col in ("Open", "High", "Low"):
+        if col in hist.columns and not ultima[col] > 0:
+            completa = False
+    if completa or len(hist) < 2:
+        return hist, "yfinance"
+    prev_close = float(hist["Close"].iloc[-2])
+    if spot_brapi and spot_brapi > 0 and prev_close > 0:
+        if abs(spot_brapi - prev_close) / prev_close <= 0.05:
+            fix = hist.copy()
+            for col in ("Open", "High", "Low", "Close"):
+                if col in fix.columns:
+                    fix.iloc[-1, fix.columns.get_loc(col)] = spot_brapi
+            return fix, "brapi"
+    return hist.iloc[:-1].copy(), "yfinance*"
+
+
+def _spots_brapi() -> dict[str, float]:
+    """Spot prices from brapi (free tier OK). Returns {} when unavailable."""
+    try:
+        from modulos import opcoes_b3
+        if not opcoes_b3.token_configurado():
+            return {}
+        return opcoes_b3.buscar_cotacoes(["BOVA11", "HASH11"])
+    except Exception:
+        return {}
 def _preservar_ultimo_ohlc_invalido(hist: pd.DataFrame) -> pd.DataFrame:
     """Keep the last row if only Open/High/Low are zero but Close is valid."""
     if hist.empty or "Close" not in hist.columns:
@@ -96,6 +133,7 @@ def buscar_dados_mercado() -> dict[str, dict]:
     3319.57
     """
     usdbrl = buscar_usdbrl()
+    spots_brapi = _spots_brapi()
     resultado: dict[str, dict] = {}
 
     for nome, ticker_sa in TICKERS.items():
@@ -112,6 +150,8 @@ def buscar_dados_mercado() -> dict[str, dict]:
         # Drop rows with any zero OHLC value (partial/corrupt intraday bars).
         # Preserve the final row if it contains only Close and valid Close price.
         hist = _preservar_ultimo_ohlc_invalido(hist)
+        # Fix corrupt last bar (zeroed O/H/L) with brapi spot when sane.
+        hist, fonte_preco = corrigir_ultima_barra(hist, spots_brapi.get(nome))
         # Drop rows with anomalous daily move > 50 %
         var_diaria = hist["Close"].pct_change().abs()
         hist = hist[(var_diaria < 0.50) | var_diaria.isna()].copy()
@@ -140,6 +180,7 @@ def buscar_dados_mercado() -> dict[str, dict]:
         resultado[nome] = {
             "preco": round(preco_atual, 2),
             "preco_brl": preco_brl,
+            "fonte_preco": fonte_preco,
             "moeda": "USD" if em_usd else "BRL",
             "usdbrl": usdbrl,
             "variacao_pct": round(variacao_pct, 6),

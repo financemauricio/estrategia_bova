@@ -164,6 +164,12 @@ if preco_bova and ma_decisao:
     cc.metric("Variação Hoje", mercado.variacao_fmt(var_bova))
     cd.metric("Viés", "🟢 CALL" if acima else "🔴 PUT")
 
+    _fonte_bova = bova.get("fonte_preco", "yfinance")
+    if _fonte_bova == "brapi":
+        st.caption("Cotação de hoje corrigida via brapi (barra parcial do Yahoo).")
+    elif _fonte_bova == "yfinance*":
+        st.caption("Pregão de hoje ainda indisponível — usando fechamento anterior.")
+
     # Other MAs for reference
     outras_mas = [j for j in MA_VISUALIZACAO if j != MA_PERIODO]
     if outras_mas:
