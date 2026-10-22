@@ -5,6 +5,9 @@ data and answers: "which option would I sell on this asset today, and at what
 strike?".
 """
 
+# Shown in the sidebar so it is obvious which version is deployed
+APP_VERSION: str = "2026-10-21 · cotação 3 fontes"
+
 # Assets monitored (name → yfinance ticker)
 TICKERS: dict[str, str] = {
     "BOVA11": "BOVA11.SA",

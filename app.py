@@ -2,6 +2,8 @@
 
 import streamlit as st
 
+from config import APP_VERSION
+
 st.set_page_config(
     page_title="Sinais de Opções",
     page_icon="📊",
@@ -16,4 +18,5 @@ pages = [
 ]
 
 pg = st.navigation(pages)
+st.sidebar.caption(f"versão {APP_VERSION}")
 pg.run()
