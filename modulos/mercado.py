@@ -69,16 +69,28 @@ def corrigir_ultima_barra(hist: pd.DataFrame, spot_brapi: float | None) -> tuple
     return hist.iloc[:-1].copy(), "yfinance*"
 
 
-def _spots_brapi() -> dict[str, float]:
-    """Spot prices from brapi (free tier). Empty dict when unavailable."""
-    try:
-        from modulos import opcoes_b3
+def _atualizar_ultima_barra(hist: pd.DataFrame, preco: float | None) -> pd.DataFrame:
+    """Stamp the latest daily bar with the consensus price (chart + MAs).
 
-        if not opcoes_b3.token_configurado():
-            return {}
-        return opcoes_b3.buscar_cotacoes(list(TICKERS))
-    except Exception:
-        return {}
+    Only when the last bar is recent (≤ 4 days) and the price is plausible
+    (≤ 10 % away from that bar's close), so a stale or broken bar is never
+    silently overwritten.
+    """
+    if not preco or hist.empty or "Close" not in hist.columns:
+        return hist
+
+    dias = (pd.Timestamp.now().normalize() - hist.index[-1].normalize()).days
+    fechamento = float(hist["Close"].iloc[-1])
+    if dias > 4 or fechamento <= 0 or abs(preco / fechamento - 1) > 0.10:
+        return hist
+
+    fix = hist.copy()
+    fix.iloc[-1, fix.columns.get_loc("Close")] = preco
+    if "High" in fix.columns:
+        fix.iloc[-1, fix.columns.get_loc("High")] = max(float(fix["High"].iloc[-1]), preco)
+    if "Low" in fix.columns:
+        fix.iloc[-1, fix.columns.get_loc("Low")] = min(float(fix["Low"].iloc[-1]), preco)
+    return fix
 
 
 def _vol_anual(hist: pd.DataFrame, janela: int = 20) -> float | None:
@@ -92,30 +104,42 @@ def _vol_anual(hist: pd.DataFrame, janela: int = 20) -> float | None:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL_SECONDS, show_spinner=False)
+def _historico(yf_ticker: str) -> pd.DataFrame:
+    """Daily history, cached for the refresh window."""
+    try:
+        hist = yf.Ticker(yf_ticker).history(period=HISTORICO_PERIODO)
+    except Exception:
+        return pd.DataFrame()
+    if not hist.empty:
+        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+    return hist
+
+
 def buscar_dados_mercado() -> dict[str, dict]:
     """Fetch price, daily variation, MAs and volatility for every asset.
+
+    The current price comes from :mod:`modulos.cotacoes` (Yahoo + brapi +
+    Status Invest consensus with timestamp); history comes from yfinance.
 
     Returns
     -------
     dict[str, dict]
-        Per asset: preco, variacao_pct, ma_decisao, mas, vol, hist, fonte_preco.
+        Per asset: preco, variacao_pct, ma_decisao, mas, vol, hist,
+        fonte_preco, cotacao (sources, time, confidence).
     """
-    spots_brapi = _spots_brapi()
+    from modulos import cotacoes
+
     resultado: dict[str, dict] = {}
 
     for nome, yf_ticker in TICKERS.items():
-        try:
-            hist = yf.Ticker(yf_ticker).history(period=HISTORICO_PERIODO)
-        except Exception:
-            continue
-
+        hist = _historico(yf_ticker)
         if hist.empty or len(hist) < 2:
             continue
 
-        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        cot = cotacoes.cotacao(nome, yf_ticker)
 
         hist = _preservar_ultimo_ohlc_invalido(hist)
-        hist, fonte_preco = corrigir_ultima_barra(hist, spots_brapi.get(nome))
+        hist, fonte_preco = corrigir_ultima_barra(hist, cot.get("preco"))
 
         # Drop anomalous daily moves > 50 %
         var_diaria = hist["Close"].pct_change().abs()
@@ -124,9 +148,18 @@ def buscar_dados_mercado() -> dict[str, dict]:
         if len(hist) < 2:
             continue
 
-        preco_atual = float(hist["Close"].iloc[-1])
-        preco_ontem = float(hist["Close"].iloc[-2])
-        variacao_pct = (preco_atual - preco_ontem) / preco_ontem
+        preco_hist = float(hist["Close"].iloc[-1])
+        preco = float(cot["preco"]) if cot.get("preco") else preco_hist
+
+        anterior = cot.get("anterior")
+        if anterior and anterior > 0 and 0.80 <= preco / anterior <= 1.20:
+            preco_ontem = float(anterior)
+        else:
+            preco_ontem = float(hist["Close"].iloc[-2])
+
+        variacao_pct = (preco - preco_ontem) / preco_ontem if preco_ontem else 0.0
+
+        hist = _atualizar_ultima_barra(hist, preco)
 
         mas: dict[int, float | None] = {}
         for janela in MA_VISUALIZACAO:
@@ -137,13 +170,14 @@ def buscar_dados_mercado() -> dict[str, dict]:
             )
 
         resultado[nome] = {
-            "preco": round(preco_atual, 2),
+            "preco": round(preco, 2),
             "variacao_pct": round(variacao_pct, 6),
             "ma_decisao": mas.get(MA_PERIODO),
             "mas": mas,
             "vol": _vol_anual(hist),
             "hist": hist,
-            "fonte_preco": fonte_preco,
+            "fonte_preco": cot.get("fonte", fonte_preco),
+            "cotacao": cot,
         }
 
     return resultado

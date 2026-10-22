@@ -45,7 +45,25 @@ BRAPI_TOKEN = "seu_token"
 ```
 
 No Streamlit Cloud: **Manage app → Settings → Secrets**, cole a mesma linha e
-faça **Reboot app**. Sem token, o app descarta a barra corrompida e avisa na tela.
+faça **Reboot app**. Sem token, o app segue com Yahoo + Status Invest.
+
+### Cotação em três fontes
+
+O preço do ativo é o input da regra, então ele não vem de uma fonte só:
+
+| Fonte | O que traz | Horário |
+|---|---|---|
+| Yahoo Finance | preço e horário do último negócio | sim |
+| brapi | preço e fechamento anterior | sim (pode ser o horário do feed) |
+| Status Invest | preço de conferência | não |
+
+- As fontes são comparadas a cada minuto. Se concordam (até 0,8 %), o app mostra
+  `consenso`; se divergem, avisa e manda confirmar no Home Broker.
+- Fora do pregão o cabeçalho mostra **"fechamento de dd/mm"** em vez de um
+  horário que poderia parecer tempo real.
+- A cotação fica visível na tabela de sinais (coluna `Cotação`) e no detalhe de
+  cada ativo, com o preço de cada fonte em **🔎 De onde vem cada preço**.
+
 
 ---
 
@@ -69,7 +87,8 @@ estrategia_acumulacao/
 ├── config.py                  # ativos, limiares, delta, prêmio mínimo
 ├── requirements.txt
 ├── modulos/
-│   ├── mercado.py             # yfinance + correção de barra via brapi
+│   ├── mercado.py             # histórico yfinance + consenso de preço
+│   ├── cotacoes.py            # Yahoo + brapi + Status Invest, com horário
 │   ├── estrategia.py          # regra por ativo (viés, strike, prêmio)
 │   ├── bs.py                  # Black-Scholes, vol histórica, Selic (BCB)
 │   ├── opcoes_b3.py           # brapi, strike por delta, delta/BS

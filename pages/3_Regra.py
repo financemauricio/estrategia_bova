@@ -61,6 +61,17 @@ st.markdown(
 )
 
 st.divider()
+st.subheader("A cotação — o input da regra")
+st.markdown(
+    """
+- O preço vem de **três fontes**: Yahoo (horário do último negócio), brapi e Status Invest.
+- O app compara as três a cada minuto. Se concordam (até 0,8 %), usa o consenso; se divergem, **avisa** e manda confirmar no Home Broker.
+- Depois do fechamento aparece **"fechamento de dd/mm"** — não um horário que finge ser tempo real.
+- Em **Sinais → 🔎 De onde vem cada preço** você vê o valor bruto de cada fonte.
+"""
+)
+
+st.divider()
 st.subheader("Expectativa realista")
 st.caption(
     "Backtest de 56 ciclos mensais de PUT delta -0,25 em BOVA11 (~4,5 anos, prêmio teórico, "

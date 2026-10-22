@@ -21,7 +21,7 @@ from config import (
     PREMIO_MIN_PCT,
     REFRESH_INTERVAL_SECONDS,
 )
-from modulos import bs, estrategia, mercado
+from modulos import bs, cotacoes, estrategia, mercado
 from modulos.componentes import prob_badge
 
 if _HAS_AUTOREFRESH:
@@ -68,10 +68,14 @@ st.divider()
 
 _linhas = []
 for r in resultados:
+    _cot = dados[r["ativo"]].get("cotacao", {})
+    _conf = _cot.get("confianca")
+    _marca = {"alta": "✓", "unica": "1 fonte", "divergente": "⚠"}.get(_conf, "")
     _linhas.append({
         "Ativo": r["ativo"],
         "Preço": mercado.formatar_reais(r.get("preco")),
         "Variação": mercado.variacao_fmt(r.get("variacao_pct", 0.0)),
+        "Cotação": f"{cotacoes.hora_curta(_cot)} {_marca}".strip(),
         f"MA{MA_PERIODO}": mercado.formatar_reais(r.get("ma_decisao")),
         "Viés": r["vies"],
         "Ação": ("⚡ " if r["prioridade"] else "") + r["acao"],
@@ -82,6 +86,26 @@ for r in resultados:
     })
 
 st.dataframe(pd.DataFrame(_linhas), width="stretch", hide_index=True)
+
+with st.expander("🔎 De onde vem cada preço"):
+    for nome, d in dados.items():
+        cot = d.get("cotacao", {})
+        detalhes = " · ".join(
+            f"{f['fonte']} R$ {f['preco']:.2f}" for f in cot.get("fontes", [])
+        )
+        st.write(
+            f"**{nome}** — {mercado.formatar_reais(d.get('preco'))} · "
+            f"{cotacoes.descricao_cotacao(cot)}"
+        )
+        if detalhes:
+            st.caption(detalhes)
+        if cot.get("confianca") == "divergente":
+            st.warning(
+                f"{nome}: fontes divergem {cot.get('dispersao_pct', 0):.2f} %. "
+                "Confirme no Home Broker antes de operar."
+            )
+        elif cot.get("confianca") == "sem_dados":
+            st.warning(f"{nome}: sem cotação confiável agora — usando o fechamento do histórico.")
 
 st.caption(
     f"Prêmio mínimo: {PREMIO_MIN_PCT*100:.1f} % do preço por ciclo · PUT com delta ≈ {DELTA_PUT_ALVO:.2f} · "

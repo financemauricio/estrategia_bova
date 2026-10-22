@@ -13,7 +13,7 @@ from config import (
     MA_VISUALIZACAO,
     PREMIO_MIN_PCT,
 )
-from modulos import bs, estrategia, mercado
+from modulos import bs, cotacoes, estrategia, mercado
 from modulos.componentes import distancia_strike, prob_badge
 
 st.title("🔍 Análise do Ativo")
@@ -46,11 +46,13 @@ b.metric(
 c.metric("Volatilidade 20d", f"{d['vol']*100:.1f} % a.a." if d.get("vol") else "—")
 e.metric("Selic", f"{selic*100:.2f} % a.a.")
 
-_fonte = d.get("fonte_preco", "yfinance")
-if _fonte == "brapi":
-    st.caption("Cotação de hoje corrigida via brapi (barra parcial do Yahoo).")
-elif _fonte == "yfinance*":
-    st.caption("Pregão de hoje ainda indisponível — usando o fechamento anterior.")
+_cot = d.get("cotacao", {})
+_nomes = " + ".join(f["fonte"] for f in _cot.get("fontes", [])) or "histórico"
+st.caption(
+    f"🕒 Cotação: {cotacoes.descricao_cotacao(_cot)} · fontes: {_nomes} (concordância até 0,8 %). "
+    + ("⚠️ Fontes divergem — confirme no Home Broker. " if _cot.get("confianca") == "divergente" else "")
+    + ("Pregão de hoje ainda indisponível — usando o fechamento anterior. " if d.get("fonte_preco") == "yfinance*" else "")
+)
 
 # ── Chart ─────────────────────────────────────────────────────────────────────
 hist = d.get("hist")
