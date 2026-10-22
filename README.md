@@ -4,6 +4,9 @@ Painel **somente leitura de mercado** para a estratégia de venda de opções (w
 Não guarda posições, valores, aportes nem qualquer dado pessoal: não há banco de
 dados, login ou cadastro. Abre, mostra o sinal do dia e pronto.
 
+O alerta por e-mail é opcional e roda fora do painel (GitHub Actions). O endereço
+de destino fica nos **Secrets do GitHub**, não no código nem no app.
+
 ---
 
 ## O que ele responde
@@ -111,17 +114,69 @@ O Streamlit Cloud republica sozinho em ~1 minuto.
 
 ---
 
+## Alertas por e-mail
+
+O Streamlit Cloud **hiberna** quando ninguém está com a página aberta, então ele
+não consegue monitorar o mercado 24 h. O alerta roda no **GitHub Actions**, de
+graça, a cada 15 minutos durante o pregão (10:00–17:59 BRT, seg–sex).
+
+- Dispara quando a variação do dia passa de **±2 %** (`ALERTA_MOVIMENTO_PCT`).
+- Manda no máximo **um e-mail por ativo, direção, ação e modo por dia**, para não
+  spammar. Se a condição mudar (ex.: AGUARDAR → VENDER, ou RENDA → ESTICADO),
+  chega um novo aviso.
+- Ignora cotação atrasada ou sem fonte.
+- Inclui preço, variação, modo (renda/esticado), ação, strike, prêmio teórico,
+  prêmio real de fechamento e probabilidade de exercício.
+
+### Configurar (Gmail)
+
+1. Crie uma **Senha de app** no Gmail (é diferente da senha normal; exige
+   verificação em duas etapas): Conta Google → Segurança → Senhas de app.
+2. No GitHub, abra **Settings → Secrets and variables → Actions** e cadastre:
+   - `EMAIL_REMETENTE` — sua conta Gmail que envia.
+   - `EMAIL_SENHA` — a senha de app de 16 caracteres.
+   - `EMAIL_DESTINATARIO` — para onde o alerta vai.
+   - Opcional: `SMTP_HOST` (padrão `smtp.gmail.com`), `SMTP_PORT` (padrão `587`),
+     `APP_URL` (link do painel no rodapé do e-mail) e `BRAPI_TOKEN` (mesmo token
+     opcional do app, para corrigir a barra do Yahoo).
+3. Abra a aba **Actions → Alertas de movimento → Run workflow** e marque
+   **“Enviar apenas um e-mail de teste”**. Se chegar, o agendamento já está ativo.
+
+### Testar localmente
+
+```bash
+cp .env.example .env
+# preencha EMAIL_REMETENTE, EMAIL_SENHA e EMAIL_DESTINATARIO
+python notificar.py --teste-email --forcar
+python notificar.py --dry-run --forcar   # mostra o e-mail sem enviar
+```
+
+Observações:
+
+- O GitHub pode atrasar alguns minutos o horário agendado; para um alerta de
+  swing trade isso não muda a decisão.
+- Em repositório público, o GitHub desativa agendamentos após 60 dias sem
+  atividade. Se isso acontecer, rode o workflow manualmente ou faça um commit.
+- Quer alertar também quando o **modo esticado** ligar sem movimento de 2 %?
+  Basta acrescentar essa condição em `notificar.py`; hoje o gatilho é só ±2 %.
+
+---
+
 ## Estrutura
 
 ```
 estrategia_acumulacao/
 ├── app.py                     # navegação (Sinais, Análise, A Regra)
 ├── config.py                  # ativos, limiares, delta, prêmio mínimo
+├── notificar.py               # alerta por e-mail (GitHub Actions)
 ├── requirements.txt
+├── .github/workflows/
+│   └── alertas.yml            # agenda de 15 min durante o pregão
 ├── modulos/
 │   ├── mercado.py             # histórico yfinance + consenso de preço
 │   ├── cotacoes.py            # Yahoo + brapi + Status Invest, com horário
 │   ├── estrategia.py          # regra por ativo (viés, strike, prêmio)
+│   ├── alertas.py             # SMTP + template do e-mail
 │   ├── bs.py                  # Black-Scholes, vol histórica, Selic (BCB)
 │   ├── opcoes_b3.py           # brapi, strike por delta, delta/BS
 │   └── componentes.py         # formatação de UI
@@ -153,6 +208,7 @@ Tudo em `config.py`:
 | `ESTICADO_MIN_CRITERIOS` | 2 | critérios necessários para ligar o modo esticado |
 | `LIMIAR_QUEDA_PUT` | -1,5 % | queda que aciona prioridade |
 | `LIMIAR_ALTA_CALL` | +2,0 % | alta que aciona prioridade |
+| `ALERTA_MOVIMENTO_PCT` | ±2,0 % | variação que dispara e-mail (alta ou queda) |
 | `DIAS_VENCIMENTO_PADRAO` | 30 | prazo usado no cálculo |
 
 ---
@@ -165,8 +221,8 @@ pytest tests/ -q
 ```
 
 Cobrem: viés PUT/CALL, modo renda × esticado, bloqueio por prêmio baixo,
-strike por delta de PUT e CALL, escolha da série real e correção da barra
-corrompida.
+strike por delta de PUT e CALL, escolha da série real, seleção/estado dos
+alertas por e-mail e correção da barra corrompida.
 
 ---
 

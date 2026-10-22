@@ -25,6 +25,10 @@ HISTORICO_PERIODO: str = "400d"
 LIMIAR_QUEDA_PUT: float = -0.015   # drop >= 1.5 % → PUT priority
 LIMIAR_ALTA_CALL: float = 0.020    # rise >= 2.0 % → CALL priority
 
+# Email alert: absolute daily move (up or down) that triggers a message.
+# 0.02 = 2 %. The notifier runs every 15 min during the B3 session.
+ALERTA_MOVIMENTO_PCT: float = 0.02
+
 # ---------------------------------------------------------------------------
 # Modo renda (padrão): longe do dinheiro, prêmio menor, pouca chance de exercício
 # ---------------------------------------------------------------------------

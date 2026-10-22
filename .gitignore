@@ -1,6 +1,7 @@
 .env
 .streamlit/secrets.toml
 data/
+estado_alertas.json
 __pycache__/
 *.pyc
 .venv/
