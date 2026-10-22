@@ -1,0 +1,83 @@
+name: Alertas de movimento
+
+on:
+  schedule:
+    # A cada 15 min, 10:00–17:59 BRT (13:00–20:59 UTC), seg–sex.
+    - cron: "*/15 13-20 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      teste:
+        description: "Enviar apenas um e-mail de teste"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alertas-email
+  cancel-in-progress: false
+
+jobs:
+  alertar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+      EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
+      EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
+      APP_URL: ${{ secrets.APP_URL }}
+      BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Checar configuração de e-mail
+        id: email
+        run: |
+          if [ -z "$EMAIL_REMETENTE" ] || [ -z "$EMAIL_SENHA" ] || [ -z "$EMAIL_DESTINATARIO" ]; then
+            echo "configurado=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::E-mail não configurado. Cadastre EMAIL_REMETENTE, EMAIL_SENHA e EMAIL_DESTINATARIO nos Secrets do repositório."
+          else
+            echo "configurado=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restaurar estado dos alertas
+        uses: actions/cache/restore@v4
+        with:
+          path: estado_alertas.json
+          key: alertas-estado-${{ github.run_id }}
+          restore-keys: |
+            alertas-estado-
+
+      - name: Enviar e-mail de teste
+        if: steps.email.outputs.configurado == 'true' && github.event_name == 'workflow_dispatch' && inputs.teste
+        run: python notificar.py --teste-email --forcar
+
+      - name: Verificar movimentos
+        if: steps.email.outputs.configurado == 'true' && (github.event_name != 'workflow_dispatch' || !inputs.teste)
+        run: python notificar.py --state estado_alertas.json
+
+      - name: Garantir arquivo de estado
+        if: always()
+        run: test -f estado_alertas.json || echo '{}' > estado_alertas.json
+
+      - name: Salvar estado dos alertas
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: estado_alertas.json
+          key: alertas-estado-${{ github.run_id }}
