@@ -6,7 +6,7 @@ strike?".
 """
 
 # Shown in the sidebar so it is obvious which version is deployed
-APP_VERSION: str = "2026-10-21 · cotação 3 fontes"
+APP_VERSION: str = "2026-10-22 · preço com sessão"
 
 # Assets monitored (name → yfinance ticker)
 TICKERS: dict[str, str] = {
