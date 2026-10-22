@@ -13,7 +13,7 @@ from config import (
     MA_VISUALIZACAO,
     PREMIO_MIN_PCT,
 )
-from modulos import bs, cotacoes, estrategia, mercado
+from modulos import bs, cadeia, cotacoes, estrategia, mercado
 from modulos.componentes import distancia_strike, prob_badge
 
 st.title("🔍 Análise do Ativo")
@@ -29,6 +29,12 @@ ativo = st.selectbox("Ativo", list(dados.keys()))
 d = dados[ativo]
 dias = st.slider("Dias até o vencimento", 7, 60, DIAS_VENCIMENTO_PADRAO, 1)
 r = estrategia.avaliar_ativo(ativo, d, selic, dias)
+_cad = cadeia.cadeia(ativo)
+_real = (
+    cadeia.resumo_premio(_cad, r["vies"], d.get("preco"), dias, selic)
+    if r["vies"] in ("CALL", "PUT")
+    else None
+)
 
 preco = d.get("preco")
 ma = d.get("ma_decisao")
@@ -135,6 +141,29 @@ else:
 | Vencimento considerado | {dias} dias |
 """
     )
+    if _real:
+        _v = _real.get("vencimento") or ""
+        _vf = f"{_v[8:10]}/{_v[5:7]}" if len(_v) >= 10 else _v
+        m1, m2, m3 = st.columns(3)
+        m1.metric(
+            "Prêmio real (fech.)",
+            mercado.formatar_reais(_real["preco"]),
+            help=f"Último negócio de {_real.get('data', '—')} para "
+                 f"{_real['tipo']} K{_real['strike']:.2f}.",
+        )
+        m2.metric("Venc. real", f"{_vf} · {_real['dias']}d")
+        m3.metric(
+            "IV de mercado",
+            f"{_real['iv']*100:.1f} %" if _real.get("iv") else "—",
+            help="Calculada a partir do prêmio real, com o mesmo Black-Scholes do app.",
+        )
+        st.caption(
+            f"📉 Mercado de {_real.get('data', '—')}: **{_real['tipo']} "
+            f"K{_real['strike']:.0f} a R$ {_real['preco']:.2f}** · "
+            f"{_real['negocios']} negócios no dia. É o preço de fechamento, "
+            "não o bid de agora."
+        )
+
     st.info(
         "Próximo passo: abra o Home Broker, localize a série nesse strike/vencimento, "
         "confirme o **bid real** e só então decida. Se o bid estiver abaixo do mínimo, não opere."
@@ -142,6 +171,105 @@ else:
 
 for p in r["passos"]:
     st.write(("✅" if p["ok"] else "❌") + f" **{p['titulo']}** — {p['texto']}")
+
+# ── Real option chain: what the market actually paid ──────────────────────────
+st.divider()
+st.subheader("📉 Cadeia real de opções (fechamento)")
+st.caption(
+    "Últimos negócios de cada série, direto da opcoes.net.br. "
+    "Serve para comparar com o prêmio teórico e ver o que o mercado pagou — "
+    "não é o bid de agora."
+)
+
+if not _cad.get("ok"):
+    st.info(
+        "Cadeia indisponível agora. Use o prêmio teórico e confirme o bid no Home Broker."
+    )
+else:
+    _exps = _cad.get("expiracoes") or []
+    if not _exps:
+        st.info("A fonte não devolveu vencimentos para este ativo.")
+    else:
+        _idx = min(range(len(_exps)), key=lambda i: abs(_exps[i]["dias"] - dias))
+        _labels = [
+            f"{e['vencimento'][8:10]}/{e['vencimento'][5:7]} · {e['dias']}d"
+            + (" (semanal)" if e["semanal"] else " (mensal)")
+            for e in _exps
+        ]
+        _sel = st.selectbox(
+            "Vencimento para ver o book",
+            range(len(_exps)),
+            index=_idx,
+            format_func=lambda i: _labels[i],
+            key="venc_cadeia",
+        )
+        _exp = _exps[_sel]
+        _linhas = cadeia.tabela(_exp, preco)
+        if not _linhas:
+            st.info("Sem negócios suficientes neste vencimento para montar a tabela.")
+        else:
+            _df = pd.DataFrame(_linhas)
+            if _real and _real["vencimento"] == _exp["vencimento"]:
+                _df["Sugerida"] = [
+                    "★" if abs(s - _real["strike"]) < 0.01 else "" for s in _df["Strike"]
+                ]
+            st.dataframe(
+                _df,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Strike": st.column_config.NumberColumn(format="%.2f"),
+                    "CALL R$": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "PUT R$": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "CALL Δ": st.column_config.NumberColumn(format="%.2f"),
+                    "PUT Δ": st.column_config.NumberColumn(format="%.2f"),
+                    "Negócios": st.column_config.NumberColumn(format="%d"),
+                },
+            )
+            st.caption(
+                f"Fonte: opcoes.net.br · negócios de {_cad.get('data', '—')} · "
+                f"strikes em ±10 % do preço. ★ = strike sugerido pela regra."
+            )
+
+        # The exact question that confuses: same strike, different expiry.
+        _alvo = _real["strike"] if _real else r.get("strike_sugerido")
+        _lado = "calls" if (r["vies"] == "CALL") else "puts"
+        if _alvo:
+            _comp = []
+            for e in _exps:
+                op = next(
+                    (o for o in e.get(_lado, []) if abs(o["strike"] - _alvo) < 1e-6),
+                    None,
+                )
+                if op:
+                    _comp.append(
+                        {
+                            "Vencimento": f"{e['vencimento'][8:10]}/{e['vencimento'][5:7]}",
+                            "Dias": e["dias"],
+                            "Prêmio": op["preco"],
+                            "Negócios": op["negocios"],
+                        }
+                    )
+            if _comp:
+                with st.expander("Por que o mesmo strike vale tão diferente?"):
+                    st.write(
+                        f"O prêmio cresce com o tempo até o vencimento. "
+                        f"Para o strike **R$ {_alvo:.2f}**, o mercado pagou:"
+                    )
+                    st.dataframe(
+                        pd.DataFrame(_comp),
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Prêmio": st.column_config.NumberColumn(format="R$ %.2f"),
+                            "Negócios": st.column_config.NumberColumn(format="%d"),
+                        },
+                    )
+                    st.caption(
+                        "O semanal de 1 dia paga pouco porque o risco de o ativo "
+                        "se mover até lá é pequeno. O mensal de ~30 dias paga mais "
+                        "porque o risco dura 30 dias."
+                    )
 
 st.divider()
 
@@ -152,7 +280,7 @@ st.caption(
     "implícita, quase sempre maior. Digite o que você está vendo — nada é salvo."
 )
 
-_k_default = float(r["strike_sugerido"] or preco or 0.0)
+_k_default = float((_real or {}).get("strike") or r["strike_sugerido"] or preco or 0.0)
 k_real = st.number_input("Strike da série", min_value=0.01, value=_k_default, step=0.50, format="%.2f")
 p_real = st.number_input("Prêmio (bid) por cota — R$", min_value=0.0, value=0.0, step=0.01, format="%.2f")
 

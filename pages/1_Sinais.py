@@ -21,7 +21,7 @@ from config import (
     PREMIO_MIN_PCT,
     REFRESH_INTERVAL_SECONDS,
 )
-from modulos import bs, cotacoes, estrategia, mercado
+from modulos import bs, cadeia, cotacoes, estrategia, mercado
 from modulos.componentes import prob_badge
 
 if _HAS_AUTOREFRESH:
@@ -71,6 +71,13 @@ dias = st.slider(
 
 resultados = estrategia.avaliar_carteira(dados, selic, dias)
 
+with st.spinner("Buscando os prêmios reais de fechamento..."):
+    cads = {nome: cadeia.cadeia(nome) for nome in dados}
+for r in resultados:
+    r["mercado"] = cadeia.resumo_premio(
+        cads.get(r["ativo"], {}), r["vies"], r.get("preco"), dias, selic
+    )
+
 prioridades = [r for r in resultados if r["prioridade"] and r["acao"] != "AGUARDAR"]
 vender = [r for r in resultados if r["acao"] != "AGUARDAR"]
 
@@ -90,6 +97,9 @@ for r in resultados:
     _cot = dados[r["ativo"]].get("cotacao", {})
     _conf = _cot.get("confianca")
     _marca = {"alta": "✓", "unica": "1 fonte", "divergente": "⚠"}.get(_conf, "")
+    _real = r.get("mercado") or {}
+    _venc = _real.get("vencimento") or ""
+    _venc_fmt = f"{_venc[8:10]}/{_venc[5:7]}" if len(_venc) >= 10 else "—"
     _linhas.append({
         "Ativo": r["ativo"],
         "Preço": mercado.formatar_reais(r.get("preco")),
@@ -99,7 +109,13 @@ for r in resultados:
         "Viés": r["vies"],
         "Ação": ("⚡ " if r["prioridade"] else "") + r["acao"],
         "Strike ref.": mercado.formatar_reais(r.get("strike_sugerido")),
-        "Prêmio ref. (teórico)": mercado.formatar_reais(r.get("premio_teorico")),
+        "Prêmio real (fech.)": (
+            f"{mercado.formatar_reais(_real['preco'])} · K{_real['strike']:.0f}"
+            if _real
+            else "—"
+        ),
+        "Venc. real": _venc_fmt if _real else "—",
+        "Prêmio teórico": mercado.formatar_reais(r.get("premio_teorico")),
         "Prob. exercício": prob_badge(r.get("prob_exercicio")),
         "Vol. 20d": f"{r['vol']*100:.1f} %" if r.get("vol") else "—",
     })
@@ -130,8 +146,10 @@ with st.expander("🔎 De onde vem cada preço"):
 
 st.caption(
     f"Prêmio mínimo: {PREMIO_MIN_PCT*100:.1f} % do preço por ciclo · PUT com delta ≈ {DELTA_PUT_ALVO:.2f} · "
-    "Prêmio ref. = Black-Scholes com volatilidade histórica (referência, NÃO é o preço do mercado). "
-    "Use **Análise do Ativo → Confira o prêmio real** com o bid do Home Broker. "
+    f"**Prêmio real (fech.)** = último negócio do vencimento mais próximo de {dias} dias, "
+    "fonte opcoes.net.br — é o preço de fechamento, não o bid de agora. "
+    "**Teórico** = Black-Scholes com volatilidade histórica (referência). "
+    "Confirme o bid no Home Broker em **Análise do Ativo**."
 )
 
 st.divider()
@@ -141,6 +159,27 @@ for r in resultados:
     icone = "🔴" if r["vies"] == "PUT" else ("🟢" if r["vies"] == "CALL" else "⚪")
     with st.expander(f"{icone} {r['ativo']} — {r['acao']}", expanded=r["prioridade"]):
         st.write(r["mensagem"])
+        _real = r.get("mercado")
+        if _real:
+            _venc = _real.get("vencimento") or ""
+            _venc_fmt = f"{_venc[8:10]}/{_venc[5:7]}" if len(_venc) >= 10 else _venc
+            st.write(
+                f"📉 **Mercado (fech. {_real.get('data', '—')})**: "
+                f"{_real['tipo']} K{_real['strike']:.0f} a "
+                f"R$ {_real['preco']:.2f} · {_real['negocios']} negócios · "
+                f"venc. {_venc_fmt} ({_real['dias']} dias)"
+                + (f" · IV {_real['iv']*100:.1f} %" if _real.get("iv") else "")
+                + (
+                    f" · spot do fechamento R$ {_real['spot_mercado']:.2f}"
+                    if _real.get("spot_mercado")
+                    else ""
+                )
+            )
+            if _real["preco"] < r.get("premio_min", 0):
+                st.warning(
+                    f"No fechamento o mercado pagou R$ {_real['preco']:.2f}, "
+                    f"abaixo do mínimo R$ {r['premio_min']:.2f} — pela regra, não vale."
+                )
         for p in r["passos"]:
             st.write(("✅" if p["ok"] else "❌") + f" **{p['titulo']}** — {p['texto']}")
 

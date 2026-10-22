@@ -48,6 +48,14 @@ st.markdown(
 A conta teórica com volatilidade histórica (19,3 %) daria R$ 1,26 — 60 % abaixo.
 A volatilidade embutida no preço de mercado era **28 %**. É por isso que o prêmio do app
 nunca deve ser tratado como o preço da corretora.
+
+**Exemplo real (BOVA11, fechamento de 21/10/2026):** o **mesmo strike K210** valia:
+- **R$ 0,21** no semanal de **23/10** (1 dia);
+- **R$ 7,19** no mensal de **19/11** (28 dias).
+
+O prêmio teórico de ~R$ 7,00 é do vencimento de **~30 dias**. Se o book mostra R$ 0,21,
+ele está no semanal — é outro papel, com outro risco. O app agora mostra o **prêmio real
+de fechamento e o vencimento** em cada sugestão, e a cadeia completa em Análise do Ativo.
 """
 )
 

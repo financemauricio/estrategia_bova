@@ -54,10 +54,10 @@ O preço do ativo é o input da regra, então ele não vem de uma fonte só:
 | Fonte | O que traz | Horário |
 |---|---|---|
 | Yahoo Finance | preço e horário do último negócio | sim |
-| brapi | preço e fechamento anterior | sim (pode ser o horário do feed) |
+| brapi | preço e fechamento anterior | não (o horário é do feed, não do negócio) |
 | Status Invest | preço de conferência | não |
 
-- As fontes são comparadas a cada minuto. Se concordam (até 0,8 %), o app mostra
+- As fontes são comparadas a cada 2 min. Se concordam (até 0,8 %), o app mostra
   `consenso`; se divergem, avisa e manda confirmar no Home Broker.
 - Fora do pregão o cabeçalho mostra **"fechamento de dd/mm"** em vez de um
   horário que poderia parecer tempo real.
@@ -68,6 +68,28 @@ O preço do ativo é o input da regra, então ele não vem de uma fonte só:
   **"fechamento de dd/mm"** e avisa, em vez de fingir que o preço é de agora.
 - Atualização automática a cada 2 min; o botão **🔄 Forçar atualização agora**
   limpa o cache e busca de novo.
+
+### Prêmio real — a cadeia de opções
+
+O prêmio teórico (Black-Scholes com volatilidade histórica) é a régua da regra.
+Para ver o que o mercado **realmente pagou**, o app lê a cadeia pública da
+[opcoes.net.br](https://opcoes.net.br) — último negócio de cada série, sem login:
+
+| Campo | Uso no app |
+|---|---|
+| último preço | prêmio real do vencimento mais próximo de 30 dias |
+| delta | escolha do strike da PUT (≈ -0,25) |
+| nº de negócios | liquidez da série |
+| vencimento / dias | comparação semanal × mensal |
+
+- É **fechamento** (D-1): o app mostra a data e o vencimento, e não confunde com
+  o bid de agora. Cache de 15 min, uma requisição por ativo.
+- **Por que o mesmo strike vale tão diferente?** Em 21/10/2026, BOVA11 K210
+  valia **R$ 0,21** no semanal de 23/10 (1 dia) e **R$ 7,19** no mensal de 19/11
+  (28 dias). O teórico de ~R$ 7,00 é do mensal — não do semanal.
+- A página **Análise do Ativo** mostra a cadeia completa do vencimento escolhido
+  (CALL e PUT por strike, com delta e liquidez) e um comparativo do mesmo strike
+  em todos os vencimentos.
 
 
 ---
