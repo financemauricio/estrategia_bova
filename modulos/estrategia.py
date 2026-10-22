@@ -193,3 +193,52 @@ def avaliar_carteira(dados_mercado: dict, selic: float, dias: int) -> list[dict]
         avaliar_ativo(nome, dados, selic, dias)
         for nome, dados in dados_mercado.items()
     ]
+
+
+def avaliar_premio_real(
+    dados_ativo: dict,
+    tipo: str,
+    strike: float,
+    premio_real: float,
+    selic: float,
+    dias: int,
+    premio_min_pct: float = PREMIO_MIN_PCT,
+) -> dict:
+    """Evaluate the premium the user actually sees in the broker.
+
+    This is the honest path: theoretical Black-Scholes with historical
+    volatility does not match Brazilian market implied volatility, so the
+    real bid is what decides. Nothing is stored — it is a live calculation.
+    """
+    from modulos import bs, opcoes_b3
+
+    preco = dados_ativo.get("preco") or 0.0
+    T = max(dias, 1) / 252
+    iv = bs.vol_implicita(premio_real, preco, strike, T, selic, tipo) if preco > 0 else None
+    prob = None
+    delta = None
+    if iv:
+        d1 = (math.log(preco / strike) + (selic + 0.5 * iv**2) * T) / (iv * math.sqrt(T))
+        d2 = d1 - iv * math.sqrt(T)
+        prob = (1.0 - _norm_cdf(d2)) if tipo == "PUT" else _norm_cdf(d2)
+        delta = bs.delta_opcao(tipo, preco, strike, T, selic, iv)
+
+    premio_min = premio_minimo(preco, premio_min_pct) if preco else 0.0
+    ret_ciclo = (premio_real / strike * 100) if strike > 0 else None
+    ret_anual = (ret_ciclo * 252 / max(dias, 1)) if ret_ciclo is not None else None
+
+    # Strike that would give the target delta using the market's own IV
+    strike_alvo = None
+    if tipo == "PUT" and iv:
+        strike_alvo = opcoes_b3.strike_para_delta(preco, DELTA_PUT_ALVO, dias, selic, iv)
+
+    return {
+        "iv": iv,
+        "prob_exercicio": prob,
+        "delta": delta,
+        "premio_min": premio_min,
+        "premio_ok": premio_real >= premio_min,
+        "ret_ciclo_pct": ret_ciclo,
+        "ret_anual_pct": ret_anual,
+        "strike_alvo": strike_alvo,
+    }

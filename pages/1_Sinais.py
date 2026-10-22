@@ -75,8 +75,8 @@ for r in resultados:
         f"MA{MA_PERIODO}": mercado.formatar_reais(r.get("ma_decisao")),
         "Viés": r["vies"],
         "Ação": ("⚡ " if r["prioridade"] else "") + r["acao"],
-        "Strike": mercado.formatar_reais(r.get("strike_sugerido")),
-        "Prêmio teórico": mercado.formatar_reais(r.get("premio_teorico")),
+        "Strike ref.": mercado.formatar_reais(r.get("strike_sugerido")),
+        "Prêmio ref. (teórico)": mercado.formatar_reais(r.get("premio_teorico")),
         "Prob. exercício": prob_badge(r.get("prob_exercicio")),
         "Vol. 20d": f"{r['vol']*100:.1f} %" if r.get("vol") else "—",
     })
@@ -85,8 +85,8 @@ st.dataframe(pd.DataFrame(_linhas), width="stretch", hide_index=True)
 
 st.caption(
     f"Prêmio mínimo: {PREMIO_MIN_PCT*100:.1f} % do preço por ciclo · PUT com delta ≈ {DELTA_PUT_ALVO:.2f} · "
-    "Prêmio teórico via Black-Scholes (vol. histórica 20d + Selic). "
-    "Confirme sempre o bid real no Home Broker antes de operar."
+    "Prêmio ref. = Black-Scholes com volatilidade histórica (referência, NÃO é o preço do mercado). "
+    "Use **Análise do Ativo → Confira o prêmio real** com o bid do Home Broker. "
 )
 
 st.divider()

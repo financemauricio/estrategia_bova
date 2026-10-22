@@ -39,9 +39,15 @@ st.markdown(
 st.subheader("3. Prêmio mínimo — sem prêmio, sem operação")
 st.markdown(
     f"""
-- Só vale vender se o prêmio teórico chegar a **{PREMIO_MIN_PCT*100:.1f} % do preço** do ativo (por ciclo de ~30 dias).
+- Só vale vender se o prêmio **real** chegar a **{PREMIO_MIN_PCT*100:.1f} % do preço** do ativo (por ciclo de ~30 dias).
 - Se o prêmio for magro, o risco não é pago. **Ficar de fora também é posição.**
-- O valor do app é teórico (Black-Scholes). O que importa é o **bid real** no Home Broker.
+- O app mostra um **prêmio de referência** (Black-Scholes com volatilidade histórica). Ele serve para comparar séries, **não** para prever o preço do mercado.
+- Use **Análise do Ativo → Confira o prêmio real**: digite o bid do Home Broker e o app calcula a volatilidade implícita, a probabilidade e o retorno anualizado.
+
+**Exemplo real (VALE3, out/2026):** PUT strike 64 com spot 63,90 foi vendida a R$ 2,00.
+A conta teórica com volatilidade histórica (19,3 %) daria R$ 1,26 — 60 % abaixo.
+A volatilidade embutida no preço de mercado era **28 %**. É por isso que o prêmio do app
+nunca deve ser tratado como o preço da corretora.
 """
 )
 

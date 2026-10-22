@@ -121,8 +121,7 @@ def preco_put_bs(
     return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
 
 
-def preco_call_bs(
-    S: float,
+def preco_call_bs(    S: float,
     K: float,
     T: float,
     r: float,
@@ -153,3 +152,67 @@ def preco_call_bs(
     d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
     return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
+
+
+# ---------------------------------------------------------------------------
+# Implied volatility
+# ---------------------------------------------------------------------------
+
+def vol_implicita(
+    preco_mercado: float,
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    tipo: str,
+    lo: float = 0.01,
+    hi: float = 3.0,
+) -> float | None:
+    """Implied volatility from an observed market premium (bisection).
+
+    Parameters
+    ----------
+    preco_mercado : float
+        Premium actually quoted in the broker, per share.
+    S, K : float
+        Spot and strike.
+    T : float
+        Time to expiry in years.
+    r : float
+        Annual risk-free rate (decimal).
+    tipo : str
+        'PUT' or 'CALL'.
+
+    Returns
+    -------
+    float or None
+        Annual implied volatility (e.g. 0.28), or None when the premium is
+        outside the theoretically possible range.
+    """
+    if preco_mercado <= 0 or S <= 0 or K <= 0 or T <= 0:
+        return None
+
+    func = preco_put_bs if tipo.upper() == "PUT" else preco_call_bs
+    f_lo = func(S, K, T, r, lo)
+    f_hi = func(S, K, T, r, hi)
+    if not (f_lo <= preco_mercado <= f_hi):
+        return None
+
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        preco = func(S, K, T, r, mid)
+        if preco < preco_mercado:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def delta_opcao(tipo: str, S: float, K: float, T: float, r: float, sigma: float) -> float | None:
+    """Black-Scholes delta for a PUT (negative) or CALL (positive)."""
+    if S <= 0 or K <= 0 or T <= 0 or sigma <= 0:
+        return None
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    if tipo.upper() == "PUT":
+        return _norm_cdf(d1) - 1.0
+    return _norm_cdf(d1)
