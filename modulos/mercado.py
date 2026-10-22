@@ -178,6 +178,7 @@ def buscar_dados_mercado() -> dict[str, dict]:
             "hist": hist,
             "fonte_preco": cot.get("fonte", fonte_preco),
             "cotacao": cot,
+            "data_barra": hist.index[-1].strftime("%d/%m/%Y"),
         }
 
     return resultado

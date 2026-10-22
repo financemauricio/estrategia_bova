@@ -48,6 +48,11 @@ e.metric("Selic", f"{selic*100:.2f} % a.a.")
 
 _cot = d.get("cotacao", {})
 _nomes = " + ".join(f["fonte"] for f in _cot.get("fontes", [])) or "histórico"
+if _cot.get("confianca") == "sem_dados":
+    st.warning(
+        "Sem fonte ao vivo agora. O preço é o último fechamento do histórico "
+        f"({d.get('data_barra', '—')}) — confirme no Home Broker."
+    )
 st.caption(
     f"🕒 Cotação: {cotacoes.descricao_cotacao(_cot)} · fontes: {_nomes} (concordância até 0,8 %). "
     + ("⚠️ Fontes divergem — confirme no Home Broker. " if _cot.get("confianca") == "divergente" else "")

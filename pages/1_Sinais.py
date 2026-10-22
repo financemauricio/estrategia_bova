@@ -41,6 +41,17 @@ if not dados:
     st.error("Não foi possível obter cotações agora. Tente novamente em alguns minutos.")
     st.stop()
 
+_sem_fonte = [n for n, d in dados.items() if d.get("cotacao", {}).get("confianca") == "sem_dados"]
+if _sem_fonte:
+    st.warning(
+        "Sem fonte ao vivo agora para: **" + ", ".join(_sem_fonte) + "**. "
+        "O preço exibido é o último fechamento do histórico — confirme no Home Broker."
+    )
+
+if st.button("🔄 Forçar atualização agora", help="Limpa o cache e busca as cotações de novo."):
+    st.cache_data.clear()
+    st.rerun()
+
 dias = st.slider(
     "Dias até o vencimento",
     min_value=7,
@@ -97,8 +108,10 @@ with st.expander("🔎 De onde vem cada preço"):
             f"**{nome}** — {mercado.formatar_reais(d.get('preco'))} · "
             f"{cotacoes.descricao_cotacao(cot)}"
         )
-        if detalhes:
-            st.caption(detalhes)
+        st.caption(
+            (detalhes + " · " if detalhes else "")
+            + f"última barra do histórico: {d.get('data_barra', '—')}"
+        )
         if cot.get("confianca") == "divergente":
             st.warning(
                 f"{nome}: fontes divergem {cot.get('dispersao_pct', 0):.2f} %. "
