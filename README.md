@@ -63,6 +63,11 @@ O preço do ativo é o input da regra, então ele não vem de uma fonte só:
   horário que poderia parecer tempo real.
 - A cotação fica visível na tabela de sinais (coluna `Cotação`) e no detalhe de
   cada ativo, com o preço de cada fonte em **🔎 De onde vem cada preço**.
+- Fontes gratuitas têm **atraso de até 15 min**. Nos primeiros minutos do pregão
+  elas ainda devolvem o fechamento anterior; nesse caso o app mostra
+  **"fechamento de dd/mm"** e avisa, em vez de fingir que o preço é de agora.
+- Atualização automática a cada 2 min; o botão **🔄 Forçar atualização agora**
+  limpa o cache e busca de novo.
 
 
 ---

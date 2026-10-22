@@ -19,6 +19,20 @@ _BRAPI = "https://brapi.dev/api/quote/{ticker}"
 _STATUSINVEST = "https://statusinvest.com.br/{tipo}/{ativo}"
 _UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
 
+# Brazilian market time (B3): UTC-3, no DST since 2019.
+BRT = dt.timezone(dt.timedelta(hours=-3))
+
+
+def agora_brt() -> dt.datetime:
+    """Current time in São Paulo (UTC-3), regardless of server timezone."""
+    return dt.datetime.now(BRT)
+
+
+def mercado_aberto(agora: dt.datetime | None = None) -> bool:
+    """B3 regular session: weekdays, 10:00–18:00 BRT (holidays ignored)."""
+    agora = agora or agora_brt()
+    return agora.weekday() < 5 and 10 <= agora.hour < 18
+
 
 def _yahoo(ticker: str) -> dict | None:
     """Latest trade from Yahoo chart metadata (has a real trading time)."""
@@ -53,7 +67,11 @@ def _yahoo(ticker: str) -> dict | None:
 
 
 def _brapi(ativo: str) -> dict | None:
-    """Latest quote from brapi (free tier)."""
+    """Latest quote from brapi (free tier).
+
+    brapi's ``regularMarketTime`` is the feed update time, not the trade time,
+    so it is intentionally not used as the quote's timestamp.
+    """
     try:
         from modulos import opcoes_b3
 
@@ -70,21 +88,12 @@ def _brapi(ativo: str) -> dict | None:
         preco = float(res.get("regularMarketPrice") or 0)
         if preco <= 0:
             return None
-        hora = None
-        bruto = res.get("regularMarketTime")
-        if bruto:
-            try:
-                hora = dt.datetime.fromisoformat(str(bruto).replace("Z", "+00:00")).astimezone(
-                    dt.timezone(dt.timedelta(hours=-3))
-                )
-            except ValueError:
-                hora = None
         anterior = res.get("regularMarketPreviousClose")
         return {
             "fonte": "brapi",
             "preco": preco,
-            "hora": hora,
-            "ts": hora.timestamp() if hora else 0.0,
+            "hora": None,
+            "ts": 0.0,
             "anterior": float(anterior) if anterior else None,
         }
     except Exception:
@@ -125,7 +134,7 @@ def _statusinvest(nome: str) -> dict | None:
         return None
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=90, show_spinner=False)
 def cotacao(nome: str, yf_ticker: str) -> dict:
     """Consensus price from all sources that answered.
 
@@ -174,32 +183,50 @@ def cotacao(nome: str, yf_ticker: str) -> dict:
 
 
 def _hora_legivel(hora: dt.datetime | None) -> str:
-    """Trading time when inside the session, otherwise 'fechamento de ...'."""
+    """Trade time from Yahoo, e.g. '21/10 17:19'."""
     if not hora:
-        return "sem hora"
-    if hora.weekday() < 5 and 10 <= hora.hour < 18:
-        return hora.strftime("%d/%m %H:%M")
-    return "fechamento de " + hora.strftime("%d/%m")
+        return "sem horário"
+    return hora.strftime("%d/%m %H:%M")
 
 
 def hora_curta(cot: dict) -> str:
-    """Short label for a table cell: '17:19', 'fech. 21/10' or '—'."""
+    """Short label for a table cell: '17:19', 'fech. 21/10', 'hoje' or '—'."""
+    if cot.get("data_referencia"):
+        return "fech. " + cot["data_referencia"]
     hora = cot.get("hora")
-    if not hora:
-        return "—"
-    if hora.weekday() < 5 and 10 <= hora.hour < 18:
+    if hora:
         return hora.strftime("%H:%M")
-    return "fech. " + hora.strftime("%d/%m")
+    if cot.get("sessao_hoje"):
+        return "hoje"
+    return "—"
 
 
 def descricao_cotacao(cot: dict) -> str:
-    """Human-readable one-liner, e.g. '17:19 · Yahoo + brapi (concordam)'."""
+    """Human-readable one-liner with the reference date and source names."""
     if not cot.get("preco"):
         return "cotação indisponível"
-    hora_txt = _hora_legivel(cot.get("hora"))
+
+    if cot.get("data_referencia"):
+        quando = "fechamento de " + cot["data_referencia"]
+        if cot.get("mercado_aberto"):
+            quando += " (o preço de hoje ainda não chegou)"
+    elif cot.get("hora"):
+        quando = _hora_legivel(cot["hora"])
+    elif cot.get("sessao_hoje"):
+        quando = "hoje, sem horário exato"
+    else:
+        quando = "sem horário"
+
     if len(cot.get("fontes", [])) > 1:
         nomes = " + ".join(f["fonte"] for f in cot["fontes"])
         if cot["confianca"] == "alta":
-            return f"{hora_txt} · {nomes} (concordam)"
-        return f"{hora_txt} · {nomes} (divergem {cot['dispersao_pct']:.2f} %)"
-    return f"{hora_txt} · {cot['fontes'][0]['fonte'] if cot.get('fontes') else '—'}"
+            texto = f"{quando} · {nomes} (concordam)"
+        else:
+            texto = f"{quando} · {nomes} (divergem {cot['dispersao_pct']:.2f} %)"
+    else:
+        fonte = cot["fontes"][0]["fonte"] if cot.get("fontes") else "—"
+        texto = f"{quando} · {fonte}"
+
+    if cot.get("mercado_aberto"):
+        texto += " · fonte gratuita, atraso de até 15 min"
+    return texto

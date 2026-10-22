@@ -3,7 +3,7 @@ import datetime as dt
 import pandas as pd
 
 from modulos.cotacoes import descricao_cotacao, hora_curta
-from modulos.mercado import _atualizar_ultima_barra, corrigir_ultima_barra
+from modulos.mercado import _atualizar_ultima_barra, _sessao_cotacao, corrigir_ultima_barra
 
 
 def _hist(corrompida: bool = True) -> pd.DataFrame:
@@ -85,6 +85,40 @@ def test_descricao_fora_da_sessao_vira_fechamento() -> None:
         "confianca": "unica",
         "dispersao_pct": 0.0,
         "fontes": [{"fonte": "brapi"}],
+        "data_referencia": "21/10",
+        "possivel_atraso": True,
+        "mercado_aberto": True,
     }
-    assert descricao_cotacao(cot).startswith("fechamento de 21/10")
+    texto = descricao_cotacao(cot)
+    assert texto.startswith("fechamento de 21/10")
+    assert "atraso de até 15 min" in texto
     assert hora_curta(cot) == "fech. 21/10"
+
+
+def test_sessao_usa_ultimo_fechamento_quando_feed_atrasado() -> None:
+    # Histórico termina em 21/10 (203,50); fonte ainda mostra 21/10 com
+    # fechamento anterior 205,01 (20/10) → cotação é do dia 21/10.
+    h = _hist_recente()
+    hoje = h.index[-1].date() + dt.timedelta(days=1)
+    sessao, anterior = _sessao_cotacao(h, 203.0, 204.5, hoje)
+    assert sessao == h.index[-1].date()
+    assert anterior == 204.5
+
+
+def test_sessao_detecta_preco_do_dia_seguinte() -> None:
+    # Fonte já mostra o dia 22/10 com anterior = fechamento de 21/10.
+    h = _hist_recente()
+    hoje = h.index[-1].date() + dt.timedelta(days=1)
+    sessao, anterior = _sessao_cotacao(h, 205.0, 203.0, hoje)
+    assert sessao == hoje
+    assert anterior == 203.0
+
+
+def test_sessao_sem_anterior_usa_diferenca_de_preco() -> None:
+    h = _hist_recente()
+    hoje = h.index[-1].date() + dt.timedelta(days=1)
+    sessao, anterior = _sessao_cotacao(h, 205.0, None, hoje)
+    assert sessao == hoje and anterior == 203.0
+
+    sessao, anterior = _sessao_cotacao(h, 203.0, None, hoje)
+    assert sessao == h.index[-1].date() and anterior == 204.5

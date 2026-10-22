@@ -39,4 +39,4 @@ PREMIO_MIN_PCT: float = 0.006
 DIAS_VENCIMENTO_PADRAO: int = 30
 
 # Dashboard auto-refresh interval (seconds)
-REFRESH_INTERVAL_SECONDS: int = 300
+REFRESH_INTERVAL_SECONDS: int = 120

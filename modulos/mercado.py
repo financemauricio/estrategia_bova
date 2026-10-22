@@ -93,6 +93,33 @@ def _atualizar_ultima_barra(hist: pd.DataFrame, preco: float | None) -> pd.DataF
     return fix
 
 
+def _sessao_cotacao(
+    hist: pd.DataFrame, preco: float, anterior: float | None, hoje
+) -> tuple:
+    """Session date of a quote and the close it should be compared against.
+
+    The source's previous close reveals which session its price belongs to:
+
+    - equals the last daily close → quote is from the next session (today);
+    - equals the close before → quote is still the last session's close.
+
+    Returns ``(sessao, preco_ontem)``.
+    """
+    fecho = float(hist["Close"].iloc[-1])
+    penultimo = float(hist["Close"].iloc[-2])
+
+    if anterior and anterior > 0 and fecho > 0:
+        if abs(anterior - fecho) / fecho <= 0.002:
+            sessao = hoje if hist.index[-1].date() < hoje else hist.index[-1].date()
+            return sessao, fecho
+        if abs(anterior - penultimo) / penultimo <= 0.002:
+            return hist.index[-1].date(), penultimo
+
+    if preco and fecho > 0 and abs(preco - fecho) / fecho > 0.002:
+        return hoje, fecho
+    return hist.index[-1].date(), penultimo
+
+
 def _vol_anual(hist: pd.DataFrame, janela: int = 20) -> float | None:
     """Annualised volatility from the last ``janela`` log-returns."""
     from modulos import bs
@@ -150,16 +177,25 @@ def buscar_dados_mercado() -> dict[str, dict]:
 
         preco_hist = float(hist["Close"].iloc[-1])
         preco = float(cot["preco"]) if cot.get("preco") else preco_hist
+        hoje = cotacoes.agora_brt().date()
+        aberto = cotacoes.mercado_aberto()
 
-        anterior = cot.get("anterior")
-        if anterior and anterior > 0 and 0.80 <= preco / anterior <= 1.20:
-            preco_ontem = float(anterior)
-        else:
-            preco_ontem = float(hist["Close"].iloc[-2])
+        # Which session does the quote belong to? A source's previous close
+        # reveals it: matching the last close means today's session; matching
+        # the one before means the feed is still showing the last close.
+        sessao, preco_ontem = _sessao_cotacao(hist, preco, cot.get("anterior"), hoje)
 
         variacao_pct = (preco - preco_ontem) / preco_ontem if preco_ontem else 0.0
 
-        hist = _atualizar_ultima_barra(hist, preco)
+        cot["mercado_aberto"] = aberto
+        cot["sessao_hoje"] = sessao == hoje
+        cot["possivel_atraso"] = bool(sessao < hoje and aberto)
+        cot["data_referencia"] = sessao.strftime("%d/%m") if sessao < hoje else None
+
+        # Only stamp the last bar when the quote belongs to that same session;
+        # a live price from a newer session must not overwrite yesterday's close.
+        if sessao == hist.index[-1].date():
+            hist = _atualizar_ultima_barra(hist, preco)
 
         mas: dict[int, float | None] = {}
         for janela in MA_VISUALIZACAO:

@@ -48,6 +48,14 @@ if _sem_fonte:
         "O preço exibido é o último fechamento do histórico — confirme no Home Broker."
     )
 
+_atrasados = [n for n, d in dados.items() if d.get("cotacao", {}).get("possivel_atraso")]
+if _atrasados:
+    st.info(
+        "Mercado aberto e as fontes gratuitas ainda mostram o **fechamento anterior** para: "
+        + ", ".join(_atrasados)
+        + ". O preço de hoje chega com atraso de até 15 min — use o botão abaixo para buscar de novo."
+    )
+
 if st.button("🔄 Forçar atualização agora", help="Limpa o cache e busca as cotações de novo."):
     st.cache_data.clear()
     st.rerun()
