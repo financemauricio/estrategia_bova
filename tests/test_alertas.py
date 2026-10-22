@@ -26,6 +26,7 @@ def _r(
     base = {
         "ativo": ativo,
         "preco": 100.0,
+        "ma_decisao": 95.0,
         "variacao_pct": variacao,
         "vies": vies,
         "acao": acao,
@@ -71,10 +72,21 @@ def test_permite_queda_depois_de_alta() -> None:
         "data": "2026-10-22",
         "enviados": {"BOVA11:ALTA:VENDER CALL:RENDA": "x"},
     }
-    resultados = [_r("BOVA11", -0.025)]
+    resultados = [_r("BOVA11", -0.025, vies="PUT", acao="VENDER PUT")]
     novos = selecionar_alertas(resultados, estado, 0.02)
     assert len(novos) == 1
-    assert novos[0]["chave"] == "BOVA11:QUEDA:VENDER CALL:RENDA"
+    assert novos[0]["chave"] == "BOVA11:QUEDA:VENDER PUT:RENDA"
+
+
+def test_nao_alerta_movimento_contra_o_vies_da_ma50() -> None:
+    estado = {"data": "2026-10-22", "enviados": {}}
+    resultados = [
+        # Subiu 3 %, mas está abaixo da MA50 → viés PUT, não CALL.
+        _r("BOVA11", 0.03, vies="PUT", acao="VENDER PUT"),
+        # Caiu 3 %, mas está acima da MA50 → viés CALL, não PUT.
+        _r("VALE3", -0.03, vies="CALL", acao="VENDER CALL"),
+    ]
+    assert selecionar_alertas(resultados, estado, 0.02) == []
 
 
 def test_permite_novo_alerta_quando_acao_ou_modo_muda() -> None:
@@ -166,6 +178,8 @@ def test_email_html_tem_aviso_de_call_coberta() -> None:
     item = {
         "ativo": "BOVA11",
         "preco": 100.0,
+        "ma": 95.0,
+        "distancia_ma": 0.0526,
         "variacao_pct": 0.021,
         "vies": "CALL",
         "modo": "RENDA",
@@ -182,4 +196,6 @@ def test_email_html_tem_aviso_de_call_coberta() -> None:
     html_body, texto = alertas.montar_email_movimentos([item])
     assert "BOVA11" in html_body
     assert "coberta" in html_body.lower()
+    assert "MA50" in html_body
     assert "BOVA11" in texto
+    assert "MA50" in texto

@@ -124,6 +124,15 @@ def montar_email_movimentos(
             if item.get("data_real"):
                 real_txt += f" · fech. {item['data_real']}"
 
+        ma = item.get("ma")
+        dist_ma = item.get("distancia_ma")
+        ma_txt = "MA50 indisponível"
+        if ma:
+            ma_txt = f"MA50 {_fmt_reais(ma)}"
+            if dist_ma is not None:
+                lado = "acima" if dist_ma >= 0 else "abaixo"
+                ma_txt += f" · preço {_fmt_pct(dist_ma)} {lado}"
+
         cards.append(
             f"""
         <div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;
@@ -143,6 +152,9 @@ def montar_email_movimentos(
             &nbsp;·&nbsp; preço {_fmt_reais(item.get('preco'))}
             &nbsp;·&nbsp; strike {_fmt_reais(item.get('strike'))}
           </div>
+          <div style="margin-top:4px;color:#374151;font-size:0.9rem">
+            {ma_txt}
+          </div>
           <div style="margin-top:4px;color:#4b5563;font-size:0.92rem">
             Prêmio real (fech.): {real_txt}<br>
             Prêmio teórico: {_fmt_reais(item.get('premio_teorico'))}
@@ -156,6 +168,7 @@ def montar_email_movimentos(
         linhas_texto.append(
             f"{item.get('ativo')} {_fmt_pct(var)} | {acao} | strike {_fmt_reais(item.get('strike'))}\n"
             f"  preço {_fmt_reais(item.get('preco'))} · modo {modo} · viés {item.get('vies')}\n"
+            f"  {ma_txt}\n"
             f"  prêmio real (fech.) {real_txt}\n"
             f"  prêmio teórico {_fmt_reais(item.get('premio_teorico'))} · prob. {_fmt_prob(item.get('prob'))}\n"
             f"  motivo: {item.get('motivo', '')}"

@@ -120,13 +120,19 @@ O Streamlit Cloud **hiberna** quando ninguém está com a página aberta, então
 não consegue monitorar o mercado 24 h. O alerta roda no **GitHub Actions**, de
 graça, a cada 15 minutos durante o pregão (10:00–17:59 BRT, seg–sex).
 
-- Dispara quando a variação do dia passa de **±2 %** (`ALERTA_MOVIMENTO_PCT`).
+- Primeiro olha a **MA50**: preço acima → viés **CALL**; abaixo → viés **PUT**.
+- Só dispara se o movimento do dia **confirmar o viés**: alta ≥ **2 %** com viés
+  CALL, ou queda ≥ **2 %** com viés PUT (`ALERTA_MOVIMENTO_PCT`).
+- Se está acima da MA50 e cai 2 %, **não** manda (o viés continua CALL); se está
+  abaixo e sobe 2 %, **não** manda (o viés continua PUT). Se o movimento fizer o
+  preço cruzar a MA50, o viés muda e o alerta pode disparar.
 - Manda no máximo **um e-mail por ativo, direção, ação e modo por dia**, para não
   spammar. Se a condição mudar (ex.: AGUARDAR → VENDER, ou RENDA → ESTICADO),
   chega um novo aviso.
 - Ignora cotação atrasada ou sem fonte.
-- Inclui preço, variação, modo (renda/esticado), ação, strike, prêmio teórico,
-  prêmio real de fechamento e probabilidade de exercício.
+- Inclui preço, variação, **MA50 e distância até ela**, viés, modo
+  (renda/esticado), ação, strike, prêmio teórico, prêmio real de fechamento e
+  probabilidade de exercício.
 
 ### Configurar (Gmail)
 
@@ -208,7 +214,7 @@ Tudo em `config.py`:
 | `ESTICADO_MIN_CRITERIOS` | 2 | critérios necessários para ligar o modo esticado |
 | `LIMIAR_QUEDA_PUT` | -1,5 % | queda que aciona prioridade |
 | `LIMIAR_ALTA_CALL` | +2,0 % | alta que aciona prioridade |
-| `ALERTA_MOVIMENTO_PCT` | ±2,0 % | variação que dispara e-mail (alta ou queda) |
+| `ALERTA_MOVIMENTO_PCT` | ±2,0 % | variação que dispara e-mail, na direção da MA50 |
 | `DIAS_VENCIMENTO_PADRAO` | 30 | prazo usado no cálculo |
 
 ---

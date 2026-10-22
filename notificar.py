@@ -1,8 +1,10 @@
-"""E-mail notifier for strong daily moves.
+"""E-mail notifier for strong daily moves aligned with the MA50.
 
 Run by ``.github/workflows/alertas.yml`` every 15 minutes during the B3
-session. It evaluates the same rule as the Streamlit app and sends one
-message per new move (at most once per asset/direction/action/mode per day).
+session. It evaluates the same rule as the Streamlit app: above the MA50 the
+bias is CALL (wait for a rise), below it the bias is PUT (wait for a drop).
+It sends one message per new move (at most once per
+asset/direction/action/mode per day).
 
 Examples
 --------
@@ -67,20 +69,32 @@ def selecionar_alertas(
     estado: dict,
     limiar: float = ALERTA_MOVIMENTO_PCT,
 ) -> list[dict]:
-    """Return new alerts: ``|daily move| >= limiar`` and not sent today.
+    """Return new alerts aligned with the MA50 bias and not sent today.
 
-    Stale/absent quotes are skipped. The rule's action (VENDER/AGUARDAR) is
-    included, but a strong move is reported even when the premium is not
-    enough — the user can see that the rule says "aguardar".
+    The move must confirm the bias: above MA50 (CALL) only a rise >= limiar
+    alerts; below MA50 (PUT) only a drop >= limiar alerts. Stale/absent quotes
+    are skipped. The rule's action (VENDER/AGUARDAR) is included, but a strong
+    move is reported even when the premium is not enough — the user can see
+    that the rule says "aguardar".
     """
     enviados = estado.get("enviados", {})
     novos: list[dict] = []
 
     for r in resultados:
         variacao = r.get("variacao_pct")
-        if variacao is None or abs(variacao) < limiar:
+        if variacao is None:
             continue
-        if r.get("vies") not in ("CALL", "PUT"):
+
+        vies = r.get("vies")
+        if vies == "CALL":
+            # Acima da MA50: só faz sentido alertar alta forte (CALL coberta).
+            if variacao < limiar:
+                continue
+        elif vies == "PUT":
+            # Abaixo da MA50: só faz sentido alertar queda forte (PUT).
+            if variacao > -limiar:
+                continue
+        else:
             continue
 
         cot = r.get("cotacao") or {}
@@ -120,8 +134,8 @@ def _motivo(r: dict) -> str:
             f"{estrategia.descrever_gatilhos(gatilhos)}."
         )
     if r.get("prioridade"):
-        return "Movimento forte no dia, na direção do viés."
-    return "Variação diária acima do limite de alerta."
+        return "Movimento forte no dia, na direção do viés da MA50."
+    return "Movimento do dia na direção do viés da MA50."
 
 
 def _item_email(r: dict, selic: float, usar_cadeia: bool = True) -> dict:
@@ -142,6 +156,8 @@ def _item_email(r: dict, selic: float, usar_cadeia: bool = True) -> dict:
             real = None
 
     preco = r.get("preco")
+    ma = r.get("ma_decisao")
+    distancia_ma = (preco - ma) / ma if preco and ma else None
     premio_real = real["preco"] if real else None
     premio_real_pct = (
         premio_real / preco if premio_real is not None and preco else None
@@ -150,6 +166,8 @@ def _item_email(r: dict, selic: float, usar_cadeia: bool = True) -> dict:
     return {
         "ativo": r.get("ativo", "—"),
         "preco": preco,
+        "ma": ma,
+        "distancia_ma": distancia_ma,
         "variacao_pct": r.get("variacao_pct"),
         "vies": r.get("vies", "—"),
         "modo": r.get("modo", "—"),
