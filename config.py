@@ -9,7 +9,7 @@ strike?".
 TICKERS: dict[str, str] = {
     "BOVA11": "BOVA11.SA",
     "VALE3":  "VALE3.SA",
-    "ITUB4":  "ITUB4.SA",
+    "ITSA4":  "ITSA4.SA",
     "PRIO3":  "PRIO3.SA",
 }
 

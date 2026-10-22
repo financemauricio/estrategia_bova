@@ -22,7 +22,7 @@ def test_abaixo_da_ma_sugere_put() -> None:
 
 
 def test_acima_da_ma_sugere_call_otm() -> None:
-    r = avaliar_ativo("ITUB4", _dados(35.0, 32.0, 0.005), selic=0.1075, dias=30)
+    r = avaliar_ativo("ITSA4", _dados(35.0, 32.0, 0.005), selic=0.1075, dias=30)
     assert r["vies"] == "CALL"
     assert r["strike_sugerido"] == round(35.0 * 1.03, 2)
     assert r["prioridade"] is False

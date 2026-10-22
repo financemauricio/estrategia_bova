@@ -1,4 +1,4 @@
-# Sinais de Opções — BOVA11, VALE3, ITUB4, PRIO3
+# Sinais de Opções — BOVA11, VALE3, ITSA4, PRIO3
 
 Painel **somente leitura de mercado** para a estratégia de venda de opções (wheel).
 Não guarda posições, valores, aportes nem qualquer dado pessoal: não há banco de
@@ -89,7 +89,7 @@ Tudo em `config.py`:
 
 | Constante | Padrão | Significado |
 |---|---|---|
-| `TICKERS` | BOVA11, VALE3, ITUB4, PRIO3 | ativos monitorados |
+| `TICKERS` | BOVA11, VALE3, ITSA4, PRIO3 | ativos monitorados |
 | `MA_PERIODO` | 50 | média que define o viés |
 | `DELTA_PUT_ALVO` | -0,25 | risco alvo da PUT (~25 % de exercício) |
 | `CALL_STRIKE_OTM_PCT` | 3 % | distância da CALL |
