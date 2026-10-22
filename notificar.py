@@ -21,10 +21,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 from pathlib import Path
 
 from config import ALERTA_MOVIMENTO_PCT, DIAS_VENCIMENTO_PADRAO
 from modulos import alertas, bs, cadeia, cotacoes, estrategia, mercado
+
+# State used only by the Streamlit app (the GitHub Actions path uses a JSON
+# file). It lives in the app process, so it survives page reruns in the same
+# browser session and is shared by multiple sessions.
+_ESTADO_APP: dict = {"data": "", "enviados": {}}
+_ESTADO_APP_LOCK = threading.Lock()
 
 
 def carregar_estado(caminho: str | Path, hoje: str) -> dict:
@@ -138,10 +145,20 @@ def _motivo(r: dict) -> str:
     return "Movimento do dia na direção do viés da MA50."
 
 
-def _item_email(r: dict, selic: float, usar_cadeia: bool = True) -> dict:
+def _item_email(
+    r: dict,
+    selic: float,
+    usar_cadeia: bool = True,
+    mercado_real: dict | None = None,
+) -> dict:
     """Enrich one rule result with the real closing premium, when possible."""
-    real = None
-    if usar_cadeia and r.get("vies") in ("CALL", "PUT") and r.get("strike_sugerido"):
+    real = mercado_real
+    if (
+        real is None
+        and usar_cadeia
+        and r.get("vies") in ("CALL", "PUT")
+        and r.get("strike_sugerido")
+    ):
         try:
             cad = cadeia.cadeia(r["ativo"])
             real = cadeia.resumo_premio(
@@ -199,6 +216,62 @@ def montar_assunto(itens: list[dict]) -> str:
 
     nomes = ", ".join(str(i.get("ativo")) for i in itens)
     return f"[Sinais] ⚡ {len(itens)} movimentos fortes — {nomes}"
+
+
+def verificar_alertas_streamlit(
+    resultados: list[dict],
+    selic: float,
+    mercados: dict[str, dict] | None = None,
+    agora=None,
+) -> str | None:
+    """Check and send alerts from inside the Streamlit app.
+
+    Uses the e-mail settings already present in Streamlit secrets and a
+    process-level state. Returns the subject when a message was sent.
+    """
+    global _ESTADO_APP
+
+    if not alertas.configurado():
+        return None
+
+    agora = agora or cotacoes.agora_brt()
+    if not cotacoes.mercado_aberto(agora):
+        return None
+
+    hoje = agora.date().isoformat()
+    with _ESTADO_APP_LOCK:
+        if _ESTADO_APP.get("data") != hoje:
+            _ESTADO_APP = {"data": hoje, "enviados": {}}
+
+        novos = selecionar_alertas(resultados, _ESTADO_APP, ALERTA_MOVIMENTO_PCT)
+        if not novos:
+            return None
+
+        itens = [
+            _item_email(
+                s["resultado"],
+                selic,
+                usar_cadeia=mercados is None,
+                mercado_real=(mercados or {}).get(s["resultado"].get("ativo")),
+            )
+            for s in novos
+        ]
+        assunto = montar_assunto(itens)
+        html_body, texto_body = alertas.montar_email_movimentos(
+            itens,
+            app_url=alertas.configuracao().get("app_url", ""),
+            agora=agora,
+        )
+
+        ok, erro = alertas.enviar_email(assunto, html_body, texto_body)
+        if not ok:
+            print(f"[alertas] falha ao enviar: {erro}")
+            return None
+
+        for s in novos:
+            _ESTADO_APP["enviados"][s["chave"]] = agora.isoformat()
+        print(f"[alertas] enviado: {assunto}")
+        return assunto
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

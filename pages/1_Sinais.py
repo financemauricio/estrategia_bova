@@ -23,8 +23,9 @@ from config import (
     PREMIO_MIN_RENDA_PCT,
     REFRESH_INTERVAL_SECONDS,
 )
-from modulos import bs, cadeia, cotacoes, estrategia, mercado
+from modulos import alertas, bs, cadeia, cotacoes, estrategia, mercado
 from modulos.componentes import prob_badge
+from notificar import verificar_alertas_streamlit
 
 if _HAS_AUTOREFRESH:
     try:
@@ -84,6 +85,35 @@ for r in resultados:
         selic,
         strike_ref=r.get("strike_sugerido"),
     )
+
+# Alerta automático enquanto o painel estiver aberto. Usa os secrets que já
+# existem no Streamlit Cloud; não precisa de GitHub Actions para este caminho.
+_assunto_alerta = verificar_alertas_streamlit(
+    resultados,
+    selic,
+    mercados={r["ativo"]: (r.get("mercado") or {}) for r in resultados},
+)
+if _assunto_alerta:
+    st.toast(f"📧 Alerta enviado: {_assunto_alerta}", icon="📧")
+
+with st.expander("📧 Alertas por e-mail"):
+    if alertas.configurado():
+        st.caption(
+            "Enquanto este painel estiver aberto, ele verifica os sinais a cada "
+            "atualização e envia quando o movimento de 2 % confirma o viés da MA50. "
+            "Para rodar com o painel fechado, use o GitHub Actions."
+        )
+        if st.button("Enviar e-mail de teste", key="teste_email_sinais"):
+            _ok, _erro = alertas.email_teste(alertas.configuracao().get("app_url", ""))
+            if _ok:
+                st.success("Teste enviado. Confira a caixa de entrada.")
+            else:
+                st.error(f"Falha ao enviar: {_erro}")
+    else:
+        st.caption(
+            "E-mail ainda não configurado nos Secrets do Streamlit Cloud. "
+            "Cadastre EMAIL_REMETENTE, EMAIL_SENHA e EMAIL_DESTINATARIO."
+        )
 
 prioridades = [r for r in resultados if r["prioridade"] and r["acao"] != "AGUARDAR"]
 vender = [r for r in resultados if r["acao"] != "AGUARDAR"]

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import notificar
 from modulos import alertas
 from notificar import (
     carregar_estado,
@@ -154,6 +157,15 @@ def test_assunto_varios_ativos() -> None:
     assert "BOVA11" in assunto and "VALE3" in assunto
 
 
+def test_configuracao_usa_streamlit_secrets_quando_env_vazio() -> None:
+    with (
+        patch.dict(alertas._ENV, {"EMAIL_REMETENTE": ""}, clear=False),
+        patch.dict(os.environ, {"EMAIL_REMETENTE": ""}, clear=False),
+        patch("streamlit.secrets", {"EMAIL_REMETENTE": "teste@exemplo.com"}),
+    ):
+        assert alertas._get("EMAIL_REMETENTE") == "teste@exemplo.com"
+
+
 def test_enviar_email_monta_e_dispara_smtp() -> None:
     fake = MagicMock()
     fake.__enter__.return_value = fake
@@ -172,6 +184,31 @@ def test_enviar_email_monta_e_dispara_smtp() -> None:
     fake.starttls.assert_called_once()
     fake.login.assert_called_once_with("remetente@exemplo.com", "abcdefghijklmnop")
     fake.sendmail.assert_called_once()
+
+
+def test_verificar_alertas_streamlit_envia_uma_vez() -> None:
+    agora = datetime(2026, 10, 22, 12, 0, tzinfo=timezone(timedelta(hours=-3)))
+    notificar._ESTADO_APP = {"data": "", "enviados": {}}
+    resultados = [_r("BOVA11", 0.021)]
+
+    with (
+        patch("notificar.alertas.configurado", return_value=True),
+        patch("notificar.alertas.configuracao", return_value={"app_url": ""}),
+        patch("notificar.alertas.enviar_email", return_value=(True, "")) as enviar,
+        patch("notificar.cotacoes.mercado_aberto", return_value=True),
+    ):
+        assunto = notificar.verificar_alertas_streamlit(
+            resultados, 0.15, mercados={}, agora=agora
+        )
+        assert assunto is not None
+        assert "BOVA11" in assunto
+        assert enviar.call_count == 1
+
+        segundo = notificar.verificar_alertas_streamlit(
+            resultados, 0.15, mercados={}, agora=agora
+        )
+        assert segundo is None
+        assert enviar.call_count == 1
 
 
 def test_email_html_tem_aviso_de_call_coberta() -> None:

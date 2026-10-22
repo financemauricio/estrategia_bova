@@ -4,8 +4,9 @@ Painel **somente leitura de mercado** para a estratégia de venda de opções (w
 Não guarda posições, valores, aportes nem qualquer dado pessoal: não há banco de
 dados, login ou cadastro. Abre, mostra o sinal do dia e pronto.
 
-O alerta por e-mail é opcional e roda fora do painel (GitHub Actions). O endereço
-de destino fica nos **Secrets do GitHub**, não no código nem no app.
+O alerta por e-mail é opcional. Com o painel aberto, ele usa os secrets do
+**Streamlit Cloud**; com o painel fechado, o **GitHub Actions** usa os secrets do
+GitHub. O endereço de destino não fica no código.
 
 ---
 
@@ -116,9 +117,16 @@ O Streamlit Cloud republica sozinho em ~1 minuto.
 
 ## Alertas por e-mail
 
-O Streamlit Cloud **hiberna** quando ninguém está com a página aberta, então ele
-não consegue monitorar o mercado 24 h. O alerta roda no **GitHub Actions**, de
-graça, a cada 15 minutos durante o pregão (10:00–17:59 BRT, seg–sex).
+Há dois caminhos, e os dois usam a mesma regra:
+
+- **Painel aberto:** a página **Sinais** verifica a cada atualização e envia
+  usando os secrets **já configurados no Streamlit Cloud**. Não precisa mexer no
+  GitHub. Funciona enquanto a aba estiver aberta; se o Streamlit hibernar, para.
+- **Painel fechado (24 h):** o **GitHub Actions** roda de graça a cada 15 min
+  durante o pregão (10:00–17:59 BRT, seg–sex) e usa os **GitHub Secrets**.
+
+Se os dois caminhos estiverem ativos ao mesmo tempo, pode chegar um e-mail
+duplicado; use um por vez.
 
 - Primeiro olha a **MA50**: preço acima → viés **CALL**; abaixo → viés **PUT**.
 - Só dispara se o movimento do dia **confirmar o viés**: alta ≥ **2 %** com viés
@@ -134,10 +142,26 @@ graça, a cada 15 minutos durante o pregão (10:00–17:59 BRT, seg–sex).
   (renda/esticado), ação, strike, prêmio teórico, prêmio real de fechamento e
   probabilidade de exercício.
 
-### Configurar (Gmail)
+### Já configurou o e-mail no Streamlit Cloud?
 
-1. Crie uma **Senha de app** no Gmail (é diferente da senha normal; exige
-   verificação em duas etapas): Conta Google → Segurança → Senhas de app.
+Se você já usava o e-mail na versão antiga, os três valores provavelmente estão
+em **Streamlit Cloud → Manage app → Settings → Secrets** (os mesmos
+`EMAIL_REMETENTE`, `EMAIL_SENHA` e `EMAIL_DESTINATARIO`). O painel novo lê esses
+secrets automaticamente.
+
+1. Abra **Sinais → 📧 Alertas por e-mail**.
+2. Clique em **Enviar e-mail de teste**.
+3. Se chegar, o caminho do painel está pronto; não precisa criar GitHub Secrets.
+4. Deixe a aba aberta durante o pregão para ele verificar a cada atualização.
+
+### Para rodar com o painel fechado (GitHub Actions)
+
+Os valores são os mesmos que estão no Streamlit Cloud; só precisam ser copiados
+para o GitHub.
+
+1. Se ainda não tem, crie uma **Senha de app** no Gmail (é diferente da senha
+   normal; exige verificação em duas etapas): Conta Google → Segurança → Senhas
+   de app.
 2. No GitHub, abra **Settings → Secrets and variables → Actions** e cadastre:
    - `EMAIL_REMETENTE` — sua conta Gmail que envia.
    - `EMAIL_SENHA` — a senha de app de 16 caracteres.
@@ -174,7 +198,7 @@ Observações:
 estrategia_acumulacao/
 ├── app.py                     # navegação (Sinais, Análise, A Regra)
 ├── config.py                  # ativos, limiares, delta, prêmio mínimo
-├── notificar.py               # alerta por e-mail (GitHub Actions)
+├── notificar.py               # alerta por e-mail (painel e GitHub Actions)
 ├── requirements.txt
 ├── .github/workflows/
 │   └── alertas.yml            # agenda de 15 min durante o pregão

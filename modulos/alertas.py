@@ -1,12 +1,13 @@
 """E-mail alerts — SMTP only, no database and no positions.
 
-The Streamlit app itself does not monitor the market while it is closed.
-``notificar.py`` (run by GitHub Actions) uses this module to send the alerts.
+The Streamlit app checks alerts while the page is open, using the settings in
+Streamlit secrets. ``notificar.py`` (run by GitHub Actions) uses this module to
+send alerts even when nobody has the app open.
 
-Credentials are read from environment variables (GitHub Actions) or from a
-local ``.env``. They are never written to the repository. The snapshot happens
-at import time, before Streamlit can load its own secrets and overwrite the
-process environment.
+Credentials are read from environment variables (GitHub Actions), a local
+``.env``, or Streamlit secrets (app). They are never written to the repository.
+The env snapshot happens at import time, before Streamlit can load its own
+secrets and overwrite the process environment.
 """
 
 from __future__ import annotations
@@ -38,8 +39,24 @@ _ENV = {nome: os.getenv(nome, "") for nome in _CAMPOS_ENV}
 
 
 def _get(nome: str, padrao: str = "") -> str:
-    """Read a setting captured before Streamlit touched the environment."""
-    return _ENV.get(nome) or os.getenv(nome, padrao)
+    """Read a setting from env/.env first, then Streamlit secrets.
+
+    The env snapshot matters for GitHub Actions; the Streamlit fallback lets
+    the app use the e-mail settings already configured in Streamlit Cloud.
+    """
+    valor = _ENV.get(nome) or os.getenv(nome, "")
+    if valor:
+        return valor
+    try:
+        import streamlit as st
+
+        if nome in st.secrets:
+            segredo = st.secrets[nome]
+            if segredo:
+                return str(segredo)
+    except Exception:
+        pass
+    return padrao
 
 
 def configuracao() -> dict[str, str]:
