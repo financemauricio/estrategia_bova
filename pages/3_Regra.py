@@ -6,12 +6,18 @@ import pandas as pd
 import streamlit as st
 
 from config import (
-    CALL_STRIKE_OTM_PCT,
-    DELTA_PUT_ALVO,
+    CALL_STRIKE_OTM_ESTICADO_PCT,
+    DELTA_CALL_RENDA,
+    DELTA_PUT_RENDA,
+    DIST_MA_ESTICADO_PCT,
+    ESTICADO_MIN_CRITERIOS,
+    GANHO_5D_ESTICADO_PCT,
     LIMIAR_ALTA_CALL,
     LIMIAR_QUEDA_PUT,
     MA_PERIODO,
-    PREMIO_MIN_PCT,
+    PREMIO_MIN_ESTICADO_PCT,
+    PREMIO_MIN_RENDA_PCT,
+    RSI_ESTICADO,
     TICKERS,
 )
 
@@ -27,19 +33,29 @@ st.markdown(
 """
 )
 
-st.subheader("2. Strike — delta fixo, não % chutado")
+st.subheader("2. Strike — dois modos, sem decisão no impulso")
 st.markdown(
     f"""
-- **PUT:** strike com delta ≈ **{DELTA_PUT_ALVO:.2f}** (≈25 % de chance de exercício).
-- **CALL:** strike **{CALL_STRIKE_OTM_PCT*100:.0f} % acima** do preço.
-- Em mês calmo o strike fica mais perto; em mês nervoso, mais longe. O risco fica constante.
+- **Modo renda (padrão):** PUT delta **{DELTA_PUT_RENDA:.2f}** · CALL delta **{DELTA_CALL_RENDA:+.2f}**.
+  Longe do dinheiro, prêmio menor, pouca chance de exercício por ciclo.
+- **Modo esticado (exceção):** quando o ativo sobe muito, a CALL vai para
+  **{CALL_STRIKE_OTM_ESTICADO_PCT*100:.0f} % acima** do preço. Prêmio maior; se exercido,
+  você vende num preço esticado.
+- Gatilho do modo esticado: **{ESTICADO_MIN_CRITERIOS} de 3** critérios —
+  distância ≥ **{DIST_MA_ESTICADO_PCT*100:.0f} %** acima da MA{MA_PERIODO},
+  RSI ≥ **{RSI_ESTICADO:.0f}**, ou ganho de 5 dias ≥ **{GANHO_5D_ESTICADO_PCT*100:.0f} %**.
+  Sem gatilho, fica no modo renda.
+- Com esses padrões, o gatilho ligou em **~8-17 % dos dias** nos últimos ~400 pregões de cada ativo —
+  é exceção, não rotina.
+- A CALL é sempre **coberta**: você precisa ter a ação. O app não rastreia posição.
 """
 )
 
 st.subheader("3. Prêmio mínimo — sem prêmio, sem operação")
 st.markdown(
     f"""
-- Só vale vender se o prêmio **real** chegar a **{PREMIO_MIN_PCT*100:.1f} % do preço** do ativo (por ciclo de ~30 dias).
+- **Modo renda:** prêmio **real** de pelo menos **{PREMIO_MIN_RENDA_PCT*100:.1f} % do preço** por ciclo.
+- **Modo esticado:** pelo menos **{PREMIO_MIN_ESTICADO_PCT*100:.1f} % do preço** por ciclo.
 - Se o prêmio for magro, o risco não é pago. **Ficar de fora também é posição.**
 - O app mostra um **prêmio de referência** (Black-Scholes com volatilidade histórica). Ele serve para comparar séries, **não** para prever o preço do mercado.
 - Use **Análise do Ativo → Confira o prêmio real**: digite o bid do Home Broker e o app calcula a volatilidade implícita, a probabilidade e o retorno anualizado.
@@ -64,6 +80,7 @@ st.markdown(
     f"""
 - Queda de **{abs(LIMIAR_QUEDA_PUT)*100:.1f} %** ou mais no dia → prioridade na PUT.
 - Alta de **{LIMIAR_ALTA_CALL*100:.1f} %** ou mais → prioridade na CALL.
+- **Modo esticado** (os {ESTICADO_MIN_CRITERIOS} de 3 critérios acima) → vender CALL +3 % OTM.
 - Fora disso, siga o viés normalmente, sem pressa.
 """
 )
@@ -82,13 +99,14 @@ st.markdown(
 st.divider()
 st.subheader("Expectativa realista")
 st.caption(
-    "Backtest de 56 ciclos mensais de PUT delta -0,25 em BOVA11 (~4,5 anos, prêmio teórico, "
-    "sem custos). Serve para calibrar expectativa, não como promessa."
+    "Backtest de 56 ciclos mensais de PUT delta -0,25 em BOVA11 (regra antiga; ~4,5 anos, "
+    "prêmio teórico, sem custos). A regra nova usa -0,15 no modo renda: menos prêmio e "
+    "menos exercício. Serve para calibrar expectativa, não como promessa."
 )
 
 st.dataframe(
     pd.DataFrame([
-        {"Estratégia": "Vender PUT (delta -0,25)", "Retorno médio/mês": "+0,34 %", "Anualizado": "~4,0 %", "Pior mês": "-4,4 %"},
+        {"Estratégia": "Vender PUT (delta -0,25, referência antiga)", "Retorno médio/mês": "+0,34 %", "Anualizado": "~4,0 %", "Pior mês": "-4,4 %"},
         {"Estratégia": "Buy-and-hold BOVA11", "Retorno médio/mês": "+1,16 %", "Anualizado": "~13,1 %", "Pior mês": "-8,1 %"},
     ]),
     width="stretch",
@@ -99,9 +117,11 @@ st.markdown(
     """
 **Como ler isso:**
 - A venda de PUT **não bate o índice em mercado de alta** — você troca parte da valorização pelo prêmio.
-- O ganho real vem de **volatilidade menor** e de **comprar mais barato nos exercícios** (~30 % dos meses).
+- O ganho real vem de **volatilidade menor** e de **comprar mais barato nos exercícios**.
+  No backtest antigo (-0,25) isso acontecia em ~30 % dos meses; no modo renda (-0,15),
+  a frequência cai para ~15 % por ciclo — e o prêmio também.
 - O caixa reservado para a PUT rende Selic (~0,85 %/mês); somando ao prêmio, o resultado empata com o índice, com menos susto.
-- Sem corretagem e IR de 15 % na conta acima. Ajuste para baixo antes de decidir.
+- Prêmio pequeno (0,4 %/ciclo) exige atenção a corretagem e IR. Sem custos na conta acima.
 """
 )
 

@@ -12,11 +12,16 @@ Para cada ativo monitorado, **uma** pergunta:
 
 > "Hoje eu venderia PUT ou CALL? Em que strike? O prêmio paga o risco?"
 
-| Viés | Condição | Ação sugerida |
-|---|---|---|
-| **PUT** | preço abaixo da MA50 | vender PUT com delta ≈ -0,25 |
-| **CALL** | preço acima da MA50 | vender CALL 3 % OTM |
-| **AGUARDAR** | prêmio teórico < 0,6 % do preço | ficar de fora |
+| Viés | Condição | Modo renda (padrão) | Modo esticado (exceção) |
+|---|---|---|---|
+| **PUT** | preço abaixo da MA50 | delta ≈ -0,15 | — |
+| **CALL** | preço acima da MA50 | delta ≈ +0,15 (coberta) | CALL +3 % OTM |
+| **AGUARDAR** | prêmio abaixo do piso | 0,4 % do preço | 1,0 % do preço |
+
+O **modo esticado** liga quando o ativo sobe muito: 2 de 3 critérios entre
+distância ≥ 8 % acima da MA50, RSI(14) ≥ 70 e ganho de 5 dias ≥ 5 %. A ideia é
+colher prêmio maior e, se exercido, vender num preço esticado. A CALL é sempre
+**coberta** — o app não rastreia posição.
 
 Prioridade máxima quando o dia tem queda ≥ 1,5 % (PUT) ou alta ≥ 2 % (CALL),
 na direção do viés.
@@ -78,7 +83,7 @@ Para ver o que o mercado **realmente pagou**, o app lê a cadeia pública da
 | Campo | Uso no app |
 |---|---|
 | último preço | prêmio real do vencimento mais próximo de 30 dias |
-| delta | escolha do strike da PUT (≈ -0,25) |
+| delta | conferência do strike sugerido (renda ≈ ±0,15) |
 | nº de negócios | liquidez da série |
 | vencimento / dias | comparação semanal × mensal |
 
@@ -137,9 +142,15 @@ Tudo em `config.py`:
 |---|---|---|
 | `TICKERS` | BOVA11, VALE3, ITSA4, PRIO3 | ativos monitorados |
 | `MA_PERIODO` | 50 | média que define o viés |
-| `DELTA_PUT_ALVO` | -0,25 | risco alvo da PUT (~25 % de exercício) |
-| `CALL_STRIKE_OTM_PCT` | 3 % | distância da CALL |
-| `PREMIO_MIN_PCT` | 0,6 % | prêmio mínimo por ciclo, em % do preço |
+| `DELTA_PUT_RENDA` | -0,15 | risco alvo da PUT no modo renda (~15 % de exercício) |
+| `DELTA_CALL_RENDA` | +0,15 | risco alvo da CALL coberta no modo renda |
+| `PREMIO_MIN_RENDA_PCT` | 0,4 % | prêmio mínimo por ciclo no modo renda |
+| `CALL_STRIKE_OTM_ESTICADO_PCT` | 3 % | distância da CALL no modo esticado |
+| `PREMIO_MIN_ESTICADO_PCT` | 1,0 % | prêmio mínimo por ciclo no modo esticado |
+| `DIST_MA_ESTICADO_PCT` | 8 % | distância acima da MA50 que conta como “esticado” |
+| `RSI_ESTICADO` | 70 | RSI que conta como “esticado” |
+| `GANHO_5D_ESTICADO_PCT` | 5 % | ganho de 5 dias que conta como “esticado” |
+| `ESTICADO_MIN_CRITERIOS` | 2 | critérios necessários para ligar o modo esticado |
 | `LIMIAR_QUEDA_PUT` | -1,5 % | queda que aciona prioridade |
 | `LIMIAR_ALTA_CALL` | +2,0 % | alta que aciona prioridade |
 | `DIAS_VENCIMENTO_PADRAO` | 30 | prazo usado no cálculo |
@@ -153,8 +164,9 @@ pip install pytest
 pytest tests/ -q
 ```
 
-Cobrem: viés PUT/CALL, bloqueio por prêmio baixo, strike por delta e correção
-da barra corrompida.
+Cobrem: viés PUT/CALL, modo renda × esticado, bloqueio por prêmio baixo,
+strike por delta de PUT e CALL, escolha da série real e correção da barra
+corrompida.
 
 ---
 

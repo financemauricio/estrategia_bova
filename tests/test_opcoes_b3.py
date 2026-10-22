@@ -1,4 +1,10 @@
-from modulos.opcoes_b3 import delta_put, filtrar_puts_regra, strike_para_delta
+from modulos.opcoes_b3 import (
+    delta_call,
+    delta_put,
+    filtrar_puts_regra,
+    strike_para_delta,
+    strike_para_delta_call,
+)
 
 
 def _cadeia() -> list:
@@ -45,3 +51,16 @@ def test_strike_para_delta_acerta_alvo() -> None:
     d = delta_put(203.65, k, 30, 0.1075, 0.184)
     assert d is not None and abs(d + 0.25) < 0.01
     assert 190 < k < 203.65
+
+
+def test_strike_para_delta_call_acerta_alvo() -> None:
+    k = strike_para_delta_call(203.65, 0.15, 30, 0.1075, 0.184)
+    assert k is not None
+    d = delta_call(203.65, k, 30, 0.1075, 0.184)
+    assert d is not None and abs(d - 0.15) < 0.01
+    assert k > 203.65
+
+
+def test_strike_para_delta_call_invalido_retorna_none() -> None:
+    assert strike_para_delta_call(203.65, -0.15, 30, 0.1075, 0.184) is None
+    assert strike_para_delta_call(203.65, 0.0, 30, 0.1075, 0.184) is None

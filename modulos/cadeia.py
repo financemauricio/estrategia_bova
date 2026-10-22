@@ -15,7 +15,7 @@ import time
 import requests
 import streamlit as st
 
-from config import CALL_STRIKE_OTM_PCT, DELTA_PUT_ALVO
+from config import CALL_STRIKE_OTM_ESTICADO_PCT, DELTA_PUT_RENDA
 
 _API = "https://opcoes.net.br/api/v1"
 _HEADERS = {
@@ -138,14 +138,28 @@ def vencimento_mais_proximo(cad: dict, dias: int) -> dict | None:
     return min(exps, key=lambda e: abs(e["dias"] - int(dias)))
 
 
-def opcao_sugerida(exp: dict, tipo: str, spot: float, delta_alvo: float = DELTA_PUT_ALVO) -> dict | None:
-    """Série mais próxima da regra: CALL +3 % OTM ou PUT com delta alvo."""
+def opcao_sugerida(
+    exp: dict,
+    tipo: str,
+    spot: float,
+    delta_alvo: float = DELTA_PUT_RENDA,
+    strike_ref: float | None = None,
+) -> dict | None:
+    """Série mais próxima da regra.
+
+    ``strike_ref`` manda: quando o app já calculou o strike sugerido, a
+    cadeia real usa esse strike (mais fiel ao que será mostrado). Sem ele,
+    mantém o fallback antigo: CALL +3 % OTM ou PUT pelo delta.
+    """
     lista = exp.get("calls" if tipo.upper() == "CALL" else "puts") or []
     if not lista or not spot or spot <= 0:
         return None
 
+    if strike_ref is not None and strike_ref > 0:
+        return min(lista, key=lambda o: abs(o["strike"] - strike_ref))
+
     if tipo.upper() == "CALL":
-        alvo = spot * (1 + CALL_STRIKE_OTM_PCT)
+        alvo = spot * (1 + CALL_STRIKE_OTM_ESTICADO_PCT)
         return min(lista, key=lambda o: abs(o["strike"] - alvo))
 
     com_delta = [o for o in lista if o.get("delta") is not None]
@@ -160,7 +174,8 @@ def resumo_premio(
     spot: float,
     dias: int,
     selic: float,
-    delta_alvo: float = DELTA_PUT_ALVO,
+    delta_alvo: float = DELTA_PUT_RENDA,
+    strike_ref: float | None = None,
 ) -> dict | None:
     """Prêmio real (último negócio) do vencimento mais próximo de ``dias``.
 
@@ -176,7 +191,7 @@ def resumo_premio(
     # O prêmio é de fechamento: strike e IV precisam usar o spot daquele
     # fechamento, não o preço intraday de agora.
     ref = cad.get("spot") or spot
-    op = opcao_sugerida(exp, tipo, ref, delta_alvo)
+    op = opcao_sugerida(exp, tipo, ref, delta_alvo, strike_ref)
     if not op:
         return None
 

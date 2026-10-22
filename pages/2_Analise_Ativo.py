@@ -7,11 +7,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import (
-    DELTA_PUT_ALVO,
+    DELTA_CALL_RENDA,
+    DELTA_PUT_RENDA,
     DIAS_VENCIMENTO_PADRAO,
     MA_PERIODO,
     MA_VISUALIZACAO,
-    PREMIO_MIN_PCT,
+    PREMIO_MIN_RENDA_PCT,
 )
 from modulos import bs, cadeia, cotacoes, estrategia, mercado
 from modulos.componentes import distancia_strike, prob_badge
@@ -31,7 +32,14 @@ dias = st.slider("Dias até o vencimento", 7, 60, DIAS_VENCIMENTO_PADRAO, 1)
 r = estrategia.avaliar_ativo(ativo, d, selic, dias)
 _cad = cadeia.cadeia(ativo)
 _real = (
-    cadeia.resumo_premio(_cad, r["vies"], d.get("preco"), dias, selic)
+    cadeia.resumo_premio(
+        _cad,
+        r["vies"],
+        d.get("preco"),
+        dias,
+        selic,
+        strike_ref=r.get("strike_sugerido"),
+    )
     if r["vies"] in ("CALL", "PUT")
     else None
 )
@@ -113,6 +121,18 @@ st.divider()
 # ── Suggestion ────────────────────────────────────────────────────────────────
 st.subheader("Sugestão da regra")
 
+if r.get("modo") == "ESTICADO":
+    st.info(
+        f"🔥 **Modo esticado** ({r['gatilhos'].get('ativos', 0)}/3): "
+        + estrategia.descrever_gatilhos(r["gatilhos"])
+        + ". A CALL vai para +3 % OTM — prêmio maior, venda num preço esticado se exercida."
+    )
+elif r.get("vies") in ("CALL", "PUT"):
+    st.caption(
+        f"Modo renda — delta {r.get('delta_alvo'):+.2f} · piso "
+        f"{r.get('premio_min_pct', 0)*100:.1f} % do preço."
+    )
+
 if r["acao"] == "AGUARDAR":
     st.warning(r["mensagem"])
 else:
@@ -135,8 +155,9 @@ else:
 | Item | Referência |
 |---|---|
 | Viés | **{r['vies']}** ({'abaixo' if r['vies'] == 'PUT' else 'acima'} da MA{MA_PERIODO}) |
+| Modo | **{r.get('modo', '—')}**{' — ' + estrategia.descrever_gatilhos(r.get('gatilhos', {})) if r.get('modo') == 'ESTICADO' else ''} |
 | Strike | R$ {r['strike_sugerido']:.2f} |
-| Prêmio mínimo aceitável | {PREMIO_MIN_PCT*100:.1f} % do preço (R$ {r.get('premio_min', 0):.2f}/cota) |
+| Prêmio mínimo aceitável | {r.get('premio_min_pct', PREMIO_MIN_RENDA_PCT)*100:.1f} % do preço (R$ {r.get('premio_min', 0):.2f}/cota) |
 | Prêmio de referência | R$ {r['premio_teorico']:.2f}/cota (vol. histórica) |
 | Vencimento considerado | {dias} dias |
 """
@@ -285,7 +306,15 @@ k_real = st.number_input("Strike da série", min_value=0.01, value=_k_default, s
 p_real = st.number_input("Prêmio (bid) por cota — R$", min_value=0.0, value=0.0, step=0.01, format="%.2f")
 
 if p_real > 0 and preco:
-    av = estrategia.avaliar_premio_real(d, r["vies"], k_real, p_real, selic, dias)
+    av = estrategia.avaliar_premio_real(
+        d,
+        r["vies"],
+        k_real,
+        p_real,
+        selic,
+        dias,
+        premio_min_pct=r.get("premio_min_pct", PREMIO_MIN_RENDA_PCT),
+    )
 
     v1, v2, v3, v4 = st.columns(4)
     v1.metric("Vol. implícita", f"{av['iv']*100:.1f} %" if av["iv"] else "fora do range")
@@ -300,7 +329,7 @@ if p_real > 0 and preco:
     if av["premio_ok"]:
         st.success(
             f"✅ Prêmio dentro da regra: R$ {p_real:.2f} ≥ mínimo R$ {av['premio_min']:.2f} "
-            f"({PREMIO_MIN_PCT*100:.1f} % do preço)."
+            f"({r.get('premio_min_pct', PREMIO_MIN_RENDA_PCT)*100:.1f} % do preço)."
         )
     else:
         st.warning(
@@ -313,6 +342,6 @@ if p_real > 0 and preco:
     if av.get("strike_alvo"):
         st.info(
             f"Com a volatilidade implícita desse negócio ({av['iv']*100:.1f} %), "
-            f"o strike de delta {DELTA_PUT_ALVO:.2f} seria **R$ {av['strike_alvo']:.2f}** — "
+            f"o strike de delta {av['delta_alvo']:+.2f} seria **R$ {av['strike_alvo']:.2f}** — "
             "use isso para comparar séries no Home Broker."
         )

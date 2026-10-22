@@ -130,6 +130,33 @@ def _vol_anual(hist: pd.DataFrame, janela: int = 20) -> float | None:
         return None
 
 
+def _rsi(hist: pd.DataFrame, janela: int = 14) -> float | None:
+    """RSI (Wilder) from daily closes. Returns None with insufficient data."""
+    if hist is None or hist.empty or "Close" not in hist or len(hist) < janela + 1:
+        return None
+    delta = hist["Close"].diff()
+    ganho = delta.clip(lower=0).ewm(alpha=1 / janela, adjust=False).mean()
+    perda = (-delta.clip(upper=0)).ewm(alpha=1 / janela, adjust=False).mean()
+    g, p = float(ganho.iloc[-1]), float(perda.iloc[-1])
+    if pd.isna(g) or pd.isna(p):
+        return None
+    if p <= 0:
+        return 100.0 if g > 0 else 50.0
+    rs = g / p
+    return round(100.0 - 100.0 / (1.0 + rs), 1)
+
+
+def _retorno(hist: pd.DataFrame, dias: int) -> float | None:
+    """Simple return over the last ``dias`` trading sessions."""
+    if hist is None or hist.empty or "Close" not in hist or len(hist) <= dias:
+        return None
+    antes = float(hist["Close"].iloc[-dias - 1])
+    agora = float(hist["Close"].iloc[-1])
+    if antes <= 0:
+        return None
+    return (agora / antes) - 1.0
+
+
 @st.cache_data(ttl=REFRESH_INTERVAL_SECONDS, show_spinner=False)
 def _historico(yf_ticker: str) -> pd.DataFrame:
     """Daily history, cached for the refresh window."""
@@ -211,6 +238,8 @@ def buscar_dados_mercado() -> dict[str, dict]:
             "ma_decisao": mas.get(MA_PERIODO),
             "mas": mas,
             "vol": _vol_anual(hist),
+            "rsi": _rsi(hist),
+            "retorno_5d": _retorno(hist, 5),
             "hist": hist,
             "fonte_preco": cot.get("fonte", fonte_preco),
             "cotacao": cot,

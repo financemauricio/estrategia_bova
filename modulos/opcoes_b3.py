@@ -178,6 +178,15 @@ def delta_put(spot: float, strike: float, dias: int, selic: float, vol: float) -
     return (1.0 + math.erf(d1 / math.sqrt(2.0))) / 2.0 - 1.0
 
 
+def delta_call(spot: float, strike: float, dias: int, selic: float, vol: float) -> float | None:
+    """Call delta (N(d1)) via Black-Scholes. Pure function — easy to test."""
+    if spot <= 0 or strike <= 0 or dias <= 0 or vol <= 0:
+        return None
+    T = max(dias, 1) / 252
+    d1 = (math.log(spot / strike) + (selic + 0.5 * vol ** 2) * T) / (vol * math.sqrt(T))
+    return (1.0 + math.erf(d1 / math.sqrt(2.0))) / 2.0
+
+
 def strike_para_delta(
     spot: float, delta_alvo: float, dias: int, selic: float, vol: float,
 ) -> float | None:
@@ -198,6 +207,29 @@ def strike_para_delta(
             hi = mid   # delta negativo demais → strike alto demais, baixar
         else:
             lo = mid
+    return round((lo + hi) / 2, 2)
+
+
+def strike_para_delta_call(
+    spot: float, delta_alvo: float, dias: int, selic: float, vol: float,
+) -> float | None:
+    """Strike whose call delta equals ``delta_alvo``. Pure function.
+
+    Call delta decreases as the strike rises, so we search above spot.
+    Used for the "modo renda" CALL: delta ≈ +0.15, far OTM.
+    """
+    if spot <= 0 or dias <= 0 or vol <= 0 or not 0 < delta_alvo < 0.6:
+        return None
+    lo, hi = spot, spot * 1.60
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        d = delta_call(spot, mid, dias, selic, vol)
+        if d is None:
+            return None
+        if d > delta_alvo:
+            lo = mid   # delta alto demais → strike baixo demais, subir
+        else:
+            hi = mid
     return round((lo + hi) / 2, 2)
 
 

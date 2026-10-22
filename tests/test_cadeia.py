@@ -102,6 +102,14 @@ def test_put_escolhida_pelo_delta_real() -> None:
     assert r["delta_mercado"] == -0.253
 
 
+def test_resumo_premio_respeita_strike_ref() -> None:
+    cad = _cad()
+    r = cadeia.resumo_premio(cad, "CALL", 203.5, 30, 0.1075, strike_ref=209.0)
+    assert r is not None
+    assert r["strike"] == 209.0
+    assert r["preco"] == 7.72
+
+
 def test_tabela_monta_book_call_e_put() -> None:
     cad = _cad()
     exp = cadeia.vencimento_mais_proximo(cad, 30)

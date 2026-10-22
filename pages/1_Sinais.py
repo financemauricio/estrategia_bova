@@ -15,10 +15,12 @@ except ImportError:
     _HAS_AUTOREFRESH = False
 
 from config import (
-    DELTA_PUT_ALVO,
+    DELTA_CALL_RENDA,
+    DELTA_PUT_RENDA,
     DIAS_VENCIMENTO_PADRAO,
     MA_PERIODO,
-    PREMIO_MIN_PCT,
+    PREMIO_MIN_ESTICADO_PCT,
+    PREMIO_MIN_RENDA_PCT,
     REFRESH_INTERVAL_SECONDS,
 )
 from modulos import bs, cadeia, cotacoes, estrategia, mercado
@@ -75,7 +77,12 @@ with st.spinner("Buscando os prêmios reais de fechamento..."):
     cads = {nome: cadeia.cadeia(nome) for nome in dados}
 for r in resultados:
     r["mercado"] = cadeia.resumo_premio(
-        cads.get(r["ativo"], {}), r["vies"], r.get("preco"), dias, selic
+        cads.get(r["ativo"], {}),
+        r["vies"],
+        r.get("preco"),
+        dias,
+        selic,
+        strike_ref=r.get("strike_sugerido"),
     )
 
 prioridades = [r for r in resultados if r["prioridade"] and r["acao"] != "AGUARDAR"]
@@ -89,6 +96,14 @@ k3.metric("Prioridade máxima", len(prioridades), help="Movimento forte no dia, 
 if prioridades:
     nomes = ", ".join(r["ativo"] for r in prioridades)
     st.success(f"⚡ Prioridade máxima: {nomes} — movimento forte no dia.")
+
+_esticados = [r for r in resultados if r.get("modo") == "ESTICADO" and r["acao"] != "AGUARDAR"]
+if _esticados:
+    nomes = ", ".join(r["ativo"] for r in _esticados)
+    st.info(
+        f"🔥 Modo esticado: {nomes} — o ativo subiu muito e a CALL vai para "
+        f"+3 % OTM. Prêmio maior; se exercido, você vende num preço esticado."
+    )
 
 st.divider()
 
@@ -108,9 +123,15 @@ for r in resultados:
         f"MA{MA_PERIODO}": mercado.formatar_reais(r.get("ma_decisao")),
         "Viés": r["vies"],
         "Ação": ("⚡ " if r["prioridade"] else "") + r["acao"],
+        "Modo": ("🔥 " if r.get("modo") == "ESTICADO" else "") + r.get("modo", "—"),
         "Strike ref.": mercado.formatar_reais(r.get("strike_sugerido")),
         "Prêmio real (fech.)": (
             f"{mercado.formatar_reais(_real['preco'])} · K{_real['strike']:.0f}"
+            + (
+                f" · {_real['preco'] / r['preco'] * 100:.2f} %"
+                if r.get("preco")
+                else ""
+            )
             if _real
             else "—"
         ),
@@ -145,11 +166,14 @@ with st.expander("🔎 De onde vem cada preço"):
             st.warning(f"{nome}: sem cotação confiável agora — usando o fechamento do histórico.")
 
 st.caption(
-    f"Prêmio mínimo: {PREMIO_MIN_PCT*100:.1f} % do preço por ciclo · PUT com delta ≈ {DELTA_PUT_ALVO:.2f} · "
+    f"Modo renda: PUT delta {DELTA_PUT_RENDA:.2f} · CALL delta {DELTA_CALL_RENDA:+.2f} · "
+    f"piso {PREMIO_MIN_RENDA_PCT*100:.1f} % do preço. "
+    f"Modo esticado: CALL +3 % OTM · piso {PREMIO_MIN_ESTICADO_PCT*100:.1f} %. "
     f"**Prêmio real (fech.)** = último negócio do vencimento mais próximo de {dias} dias, "
     "fonte opcoes.net.br — é o preço de fechamento, não o bid de agora. "
     "**Teórico** = Black-Scholes com volatilidade histórica (referência). "
-    "Confirme o bid no Home Broker em **Análise do Ativo**."
+    "Confirme o bid no Home Broker em **Análise do Ativo**. "
+    "**CALL só se coberta** — o app não rastreia posição."
 )
 
 st.divider()
@@ -159,6 +183,17 @@ for r in resultados:
     icone = "🔴" if r["vies"] == "PUT" else ("🟢" if r["vies"] == "CALL" else "⚪")
     with st.expander(f"{icone} {r['ativo']} — {r['acao']}", expanded=r["prioridade"]):
         st.write(r["mensagem"])
+        if r.get("modo") == "ESTICADO":
+            st.info(
+                f"🔥 Modo esticado ({r['gatilhos'].get('ativos', 0)}/3): "
+                + estrategia.descrever_gatilhos(r["gatilhos"])
+                + ". A CALL vai para +3 % OTM; se exercido, a venda é num preço esticado."
+            )
+        elif r.get("vies") in ("CALL", "PUT"):
+            st.caption(
+                f"Modo renda — delta {r.get('delta_alvo'):+.2f} · piso "
+                f"{r.get('premio_min_pct', 0)*100:.1f} % do preço."
+            )
         _real = r.get("mercado")
         if _real:
             _venc = _real.get("vencimento") or ""

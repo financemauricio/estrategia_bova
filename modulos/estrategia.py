@@ -7,9 +7,13 @@ For each asset it answers one question:
 Rules
 -----
 1. Bias: spot below MA{MA_PERIODO} → PUT; above → CALL.
-2. Strike: PUT at delta ≈ -0.25 (≈25 % exercise chance); CALL at +3 % OTM.
-3. Premium floor: theoretical premium must reach PREMIO_MIN per share.
-4. Priority: a strong daily move in the bias direction (≤ -1.5 % / ≥ +2 %).
+2. Modo renda (padrão): PUT delta ≈ -0.15; CALL delta ≈ +0.15.
+   Longe do dinheiro, prêmio menor, pouca chance de exercício.
+3. Modo esticado (exceção): quando o ativo sobe muito (2 de 3 critérios:
+   distância ≥ 8 % acima da MA50, RSI ≥ 70, ganho de 5 dias ≥ 5 %), a CALL
+   vai para +3 % OTM. Prêmio maior; se exercido, vende a um preço esticado.
+4. Premium floor: modo renda 0.4 % do spot; modo esticado 1.0 %.
+5. Priority: a strong daily move in the bias direction (≤ -1.5 % / ≥ +2 %).
 """
 
 from __future__ import annotations
@@ -17,16 +21,22 @@ from __future__ import annotations
 import math
 
 from config import (
-    CALL_STRIKE_OTM_PCT,
-    DELTA_PUT_ALVO,
+    CALL_STRIKE_OTM_ESTICADO_PCT,
+    DELTA_CALL_RENDA,
+    DELTA_PUT_RENDA,
+    DIST_MA_ESTICADO_PCT,
+    ESTICADO_MIN_CRITERIOS,
+    GANHO_5D_ESTICADO_PCT,
     LIMIAR_ALTA_CALL,
     LIMIAR_QUEDA_PUT,
     MA_PERIODO,
-    PREMIO_MIN_PCT,
+    PREMIO_MIN_ESTICADO_PCT,
+    PREMIO_MIN_RENDA_PCT,
+    RSI_ESTICADO,
 )
 
 
-def premio_minimo(preco: float, pct: float = PREMIO_MIN_PCT) -> float:
+def premio_minimo(preco: float, pct: float = PREMIO_MIN_RENDA_PCT) -> float:
     """Minimum premium per share for a given spot (rounded to cents)."""
     return round(preco * pct, 2)
 
@@ -35,13 +45,57 @@ def _norm_cdf(x: float) -> float:
     return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
 
 
+def detectar_esticado(
+    dados_ativo: dict,
+    preco: float | None,
+    ma: float | None,
+) -> tuple[bool, dict]:
+    """Return ``(is_stretched, details)`` using the three objective triggers.
+
+    The mode is an exception, not the default: it needs at least
+    ``ESTICADO_MIN_CRITERIOS`` of the three price/momentum criteria.
+    """
+    dist = (preco - ma) / ma if (preco and ma and ma > 0) else None
+    rsi = dados_ativo.get("rsi")
+    ret5 = dados_ativo.get("retorno_5d")
+
+    criterios = {
+        "dist": bool(dist is not None and dist >= DIST_MA_ESTICADO_PCT),
+        "rsi": bool(rsi is not None and rsi >= RSI_ESTICADO),
+        "ret5": bool(ret5 is not None and ret5 >= GANHO_5D_ESTICADO_PCT),
+    }
+    ativos = sum(criterios.values())
+    return ativos >= ESTICADO_MIN_CRITERIOS, {
+        "dist": dist,
+        "rsi": rsi,
+        "retorno_5d": ret5,
+        "criterios": criterios,
+        "ativos": ativos,
+    }
+
+
+def descrever_gatilhos(gatilhos: dict) -> str:
+    """Human-readable trigger values, e.g. ``dist. MA50 +9.1 % · RSI 72 · 5d +6.0 %``."""
+    if not gatilhos:
+        return "sem dados de gatilho"
+    partes = []
+    if gatilhos.get("dist") is not None:
+        partes.append(f"dist. MA50 {gatilhos['dist'] * 100:+.1f} %")
+    if gatilhos.get("rsi") is not None:
+        partes.append(f"RSI {gatilhos['rsi']:.0f}")
+    if gatilhos.get("retorno_5d") is not None:
+        partes.append(f"5d {gatilhos['retorno_5d'] * 100:+.1f} %")
+    return " · ".join(partes) if partes else "sem dados de gatilho"
+
+
 def avaliar_ativo(
     nome: str,
     dados_ativo: dict,
     selic: float,
     dias: int,
-    premio_min_pct: float = PREMIO_MIN_PCT,
-    delta_alvo: float = DELTA_PUT_ALVO,
+    premio_min_pct: float | None = None,
+    delta_put: float = DELTA_PUT_RENDA,
+    delta_call: float = DELTA_CALL_RENDA,
 ) -> dict:
     """Run the wheel rule for one asset.
 
@@ -55,16 +109,17 @@ def avaliar_ativo(
         Annual risk-free rate as decimal (e.g. 0.1075).
     dias : int
         Days to the chosen expiry.
-    premio_min_pct : float
-        Minimum premium as a fraction of spot (default 0.6 %).
-    delta_alvo : float
-        Target PUT delta (negative).
+    premio_min_pct : float | None
+        Optional override. When None, uses the mode floor (0.4 % renda,
+        1.0 % esticado).
+    delta_put, delta_call : float
+        Target deltas for the base (renda) mode.
 
     Returns
     -------
     dict
-        acao, vies, strike_sugerido, premio_teorico, prob_exercicio,
-        prioridade, premio_ok, passos (list of dicts), mensagem.
+        acao, vies, modo, gatilhos, strike_sugerido, premio_teorico,
+        premio_min, premio_ok, prob_exercicio, prioridade, passos, mensagem.
     """
     from modulos import bs, opcoes_b3
 
@@ -72,6 +127,8 @@ def avaliar_ativo(
     ma = dados_ativo.get("ma_decisao")
     variacao = dados_ativo.get("variacao_pct", 0.0)
     vol = dados_ativo.get("vol")
+    rsi = dados_ativo.get("rsi")
+    ret5 = dados_ativo.get("retorno_5d")
 
     base = {
         "ativo": nome,
@@ -79,6 +136,8 @@ def avaliar_ativo(
         "ma_decisao": ma,
         "variacao_pct": variacao,
         "vol": vol,
+        "rsi": rsi,
+        "retorno_5d": ret5,
         "dias": dias,
         "selic": selic,
     }
@@ -89,8 +148,13 @@ def avaliar_ativo(
             **base,
             "acao": "AGUARDAR",
             "vies": "INDEFINIDO",
+            "modo": "—",
+            "gatilhos": {},
             "strike_sugerido": None,
             "premio_teorico": None,
+            "premio_min": 0.0,
+            "premio_min_pct": PREMIO_MIN_RENDA_PCT,
+            "delta_alvo": None,
             "prob_exercicio": None,
             "prioridade": False,
             "premio_ok": False,
@@ -102,30 +166,52 @@ def avaliar_ativo(
     vies = "CALL" if acima else "PUT"
     distancia = (preco - ma) / ma
 
-    # Step 2 — strike and premium
+    # Step 2 — mode (only the CALL side has an aggressive mode)
+    esticado, gatilhos = (False, {})
+    if vies == "CALL":
+        esticado, gatilhos = detectar_esticado(dados_ativo, preco, ma)
+    modo = "ESTICADO" if esticado else "RENDA"
+    if premio_min_pct is None:
+        premio_min_pct = (
+            PREMIO_MIN_ESTICADO_PCT if modo == "ESTICADO" else PREMIO_MIN_RENDA_PCT
+        )
+
+    # Step 3 — strike and premium
     strike = None
     premio = None
     prob = None
+    delta_alvo: float | None = None
     if vol and vol > 0:
         T = max(dias, 1) / 252
         if vies == "PUT":
-            strike = opcoes_b3.strike_para_delta(preco, delta_alvo, dias, selic, vol)
+            delta_alvo = delta_put
+            strike = opcoes_b3.strike_para_delta(preco, delta_put, dias, selic, vol)
             if strike:
                 premio = bs.preco_put_bs(preco, strike, T, selic, vol)
                 d1 = (math.log(preco / strike) + (selic + 0.5 * vol**2) * T) / (vol * math.sqrt(T))
                 d2 = d1 - vol * math.sqrt(T)
                 prob = 1.0 - _norm_cdf(d2)
-        else:
-            strike = round(preco * (1 + CALL_STRIKE_OTM_PCT), 2)
+        elif modo == "ESTICADO":
+            # Regra antiga: strike 3 % acima do preço. Aqui o objetivo é
+            # colher prêmio alto e, se exercido, vender num preço esticado.
+            strike = round(preco * (1 + CALL_STRIKE_OTM_ESTICADO_PCT), 2)
             premio = bs.preco_call_bs(preco, strike, T, selic, vol)
             d1 = (math.log(preco / strike) + (selic + 0.5 * vol**2) * T) / (vol * math.sqrt(T))
             d2 = d1 - vol * math.sqrt(T)
             prob = _norm_cdf(d2)
+        else:
+            delta_alvo = delta_call
+            strike = opcoes_b3.strike_para_delta_call(preco, delta_call, dias, selic, vol)
+            if strike:
+                premio = bs.preco_call_bs(preco, strike, T, selic, vol)
+                d1 = (math.log(preco / strike) + (selic + 0.5 * vol**2) * T) / (vol * math.sqrt(T))
+                d2 = d1 - vol * math.sqrt(T)
+                prob = _norm_cdf(d2)
 
     premio_min = premio_minimo(preco, premio_min_pct) if preco else 0.0
     premio_ok = bool(premio and premio >= premio_min)
 
-    # Step 3 — priority from the daily move
+    # Step 4 — priority from the daily move
     queda_forte = variacao <= LIMIAR_QUEDA_PUT
     alta_forte = variacao >= LIMIAR_ALTA_CALL
     prioridade = (vies == "PUT" and queda_forte) or (vies == "CALL" and alta_forte)
@@ -134,17 +220,52 @@ def avaliar_ativo(
         acao = "AGUARDAR"
         mensagem = (
             f"Prêmio teórico {f'R$ {premio:.2f}' if premio else 'indisponível'} "
-            f"abaixo do mínimo R$ {premio_min:.2f} — ficar de fora também é posição."
+            f"abaixo do mínimo R$ {premio_min:.2f} "
+            f"({premio_min_pct*100:.1f} % do preço, modo {modo.lower()}) — "
+            "ficar de fora também é posição."
         )
     else:
         acao = f"VENDER {vies}"
-        mensagem = (
-            f"Vender {vies} {'ATM' if vies == 'PUT' else '+3 % OTM'} com strike "
-            f"R$ {strike:.2f} — prêmio teórico R$ {premio:.2f} "
-            f"({prob*100:.0f} % de chance de exercício)."
-        )
+        if vies == "PUT":
+            mensagem = (
+                f"Vender PUT com strike R$ {strike:.2f} — prêmio teórico "
+                f"R$ {premio:.2f} ({prob*100:.0f} % de chance de exercício). "
+                f"Modo renda: delta {delta_put:.2f}, longe do dinheiro."
+            )
+        elif modo == "ESTICADO":
+            mensagem = (
+                f"Vender CALL coberta a +{CALL_STRIKE_OTM_ESTICADO_PCT*100:.0f} % OTM "
+                f"(strike R$ {strike:.2f}) — modo esticado "
+                f"({gatilhos.get('ativos', 0)}/3: {descrever_gatilhos(gatilhos)}). "
+                f"Prêmio teórico R$ {premio:.2f} "
+                f"({prob*100:.0f} % de chance de exercício). "
+                "Se exercido, você vende a um preço esticado."
+            )
+        else:
+            mensagem = (
+                f"Vender CALL coberta com strike R$ {strike:.2f} — prêmio teórico "
+                f"R$ {premio:.2f} ({prob*100:.0f} % de chance de exercício). "
+                f"Modo renda: delta {delta_call:+.2f}, longe do dinheiro."
+            )
         if prioridade:
             mensagem += " PRIORIDADE MÁXIMA — movimento forte no dia."
+
+    if vies == "PUT":
+        modo_texto = (
+            f"Renda — PUT com delta {delta_put:.2f} "
+            f"(≈{abs(delta_put)*100:.0f} % de chance por ciclo)."
+        )
+    elif modo == "ESTICADO":
+        modo_texto = (
+            f"Esticado — {gatilhos.get('ativos', 0)}/3 critérios: "
+            f"{descrever_gatilhos(gatilhos)}. CALL a "
+            f"+{CALL_STRIKE_OTM_ESTICADO_PCT*100:.0f} % OTM."
+        )
+    else:
+        modo_texto = (
+            f"Renda — CALL com delta {delta_call:.2f} "
+            f"(≈{delta_call*100:.0f} % de chance por ciclo)."
+        )
 
     passos = [
         {
@@ -154,6 +275,11 @@ def avaliar_ativo(
                 f"Preço R$ {preco:.2f} {'acima' if acima else 'abaixo'} da média "
                 f"({distancia*100:+.2f} %) → viés {vies}."
             ),
+        },
+        {
+            "ok": True,
+            "titulo": f"Modo {modo.lower()}",
+            "texto": modo_texto,
         },
         {
             "ok": strike is not None,
@@ -176,9 +302,13 @@ def avaliar_ativo(
         **base,
         "acao": acao,
         "vies": vies,
+        "modo": modo,
+        "gatilhos": gatilhos,
         "strike_sugerido": strike,
         "premio_teorico": round(premio, 2) if premio else None,
         "premio_min": premio_min,
+        "premio_min_pct": premio_min_pct,
+        "delta_alvo": delta_alvo,
         "prob_exercicio": prob,
         "prioridade": prioridade,
         "premio_ok": premio_ok,
@@ -202,7 +332,9 @@ def avaliar_premio_real(
     premio_real: float,
     selic: float,
     dias: int,
-    premio_min_pct: float = PREMIO_MIN_PCT,
+    premio_min_pct: float = PREMIO_MIN_RENDA_PCT,
+    delta_put: float = DELTA_PUT_RENDA,
+    delta_call: float = DELTA_CALL_RENDA,
 ) -> dict:
     """Evaluate the premium the user actually sees in the broker.
 
@@ -212,6 +344,7 @@ def avaliar_premio_real(
     """
     from modulos import bs, opcoes_b3
 
+    tipo = tipo.upper()
     preco = dados_ativo.get("preco") or 0.0
     T = max(dias, 1) / 252
     iv = bs.vol_implicita(premio_real, preco, strike, T, selic, tipo) if preco > 0 else None
@@ -229,13 +362,17 @@ def avaliar_premio_real(
 
     # Strike that would give the target delta using the market's own IV
     strike_alvo = None
-    if tipo == "PUT" and iv:
-        strike_alvo = opcoes_b3.strike_para_delta(preco, DELTA_PUT_ALVO, dias, selic, iv)
+    if iv:
+        if tipo == "PUT":
+            strike_alvo = opcoes_b3.strike_para_delta(preco, delta_put, dias, selic, iv)
+        else:
+            strike_alvo = opcoes_b3.strike_para_delta_call(preco, delta_call, dias, selic, iv)
 
     return {
         "iv": iv,
         "prob_exercicio": prob,
         "delta": delta,
+        "delta_alvo": delta_put if tipo == "PUT" else delta_call,
         "premio_min": premio_min,
         "premio_ok": premio_real >= premio_min,
         "ret_ciclo_pct": ret_ciclo,
