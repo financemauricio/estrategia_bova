@@ -1,194 +1,55 @@
-# Monitor Estratégia ETF + Opções
+# Sinais de Opções — BOVA11, VALE3, ITUB4, PRIO3
 
-Painel de controle para a estratégia de acumulação com BOVA11, IVV (NYSE) e HASH11 via venda sistemática de opções.
-
----
-
-## Funcionalidades
-
-- Preço em tempo real de BOVA11, IVV e HASH11 (atualiza a cada 5 minutos)
-- MA50 do BOVA11 para decisão (MA100/MA200 como referência visual)
-- Motor de regras com os 5 passos da estratégia e recomendação automática (PUT ATM ou CALL 3% OTM)
-- Alerta por e-mail quando queda > 1,5 % ou alta > 2 %
-- Registro de posições em ETFs, aportes mensais e operações com opções
-- Calculadora de aporte para rebalancear a carteira (alvo 70/20/10)
-- Gráfico de candlestick do BOVA11 com médias móveis
-- Controle de caixa integrado: prêmios, recompras, exercícios e aportes
-- Funciona em qualquer dispositivo (celular, tablet, PC)
+Painel **somente leitura de mercado** para a estratégia de venda de opções (wheel).
+Não guarda posições, valores, aportes nem qualquer dado pessoal: não há banco de
+dados, login ou cadastro. Abre, mostra o sinal do dia e pronto.
 
 ---
 
-## Pré-requisitos
+## O que ele responde
 
-- Python 3.11+
-- Conta gratuita no [Supabase](https://supabase.com) (banco de dados)
-- Conta gratuita no [Streamlit Community Cloud](https://share.streamlit.io) (hospedagem)
-- Repositório no [GitHub](https://github.com) (privado recomendado)
-- Conta de e-mail Gmail com [App Password](https://myaccount.google.com/apppasswords) habilitado
+Para cada ativo monitorado, **uma** pergunta:
+
+> "Hoje eu venderia PUT ou CALL? Em que strike? O prêmio paga o risco?"
+
+| Viés | Condição | Ação sugerida |
+|---|---|---|
+| **PUT** | preço abaixo da MA50 | vender PUT com delta ≈ -0,25 |
+| **CALL** | preço acima da MA50 | vender CALL 3 % OTM |
+| **AGUARDAR** | prêmio teórico < 0,6 % do preço | ficar de fora |
+
+Prioridade máxima quando o dia tem queda ≥ 1,5 % (PUT) ou alta ≥ 2 % (CALL),
+na direção do viés.
 
 ---
 
-## Setup Local (teste antes do deploy)
-
-### 1. Clonar / copiar o projeto
+## Rodar localmente
 
 ```bash
-# A pasta já está em:
 cd /home/geoia/Documentos/codigos/acao/Validacao_planilha/estrategia_acumulacao
-```
-
-### 2. Criar ambiente virtual isolado
-
-```bash
-python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 3. Configurar o Supabase
-
-1. Acesse [supabase.com](https://supabase.com) → **New project**
-2. Anote o nome do projeto e a senha do banco
-3. Vá em **Project Settings → Database → Connection string → URI**
-4. Copie a string no formato: `postgresql://postgres:[senha]@[host]:5432/postgres`
-
-### 4. Configurar credenciais locais
-
-```bash
-# Criar arquivo de secrets para Streamlit
-mkdir -p .streamlit
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-```
-
-Edite `.streamlit/secrets.toml` com seus dados:
-
-```toml
-DATABASE_URL = "postgresql://postgres:SUA_SENHA@SEU_HOST:5432/postgres"
-
-EMAIL_REMETENTE = "seu@gmail.com"
-EMAIL_SENHA = "xxxx xxxx xxxx xxxx"   # App Password do Gmail
-EMAIL_DESTINATARIO = "seu@gmail.com"
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = "587"
-```
-
-### 5. Rodar localmente
-
-```bash
-source .venv/bin/activate
 streamlit run app.py
 ```
 
-O app abrirá em `http://localhost:8501`.  
-As tabelas do banco são criadas automaticamente na primeira execução.
+Abre em `http://localhost:8501`. Não precisa de banco nem de configuração prévia.
 
----
+### Token da brapi (opcional)
 
-## Deploy no Streamlit Cloud (acesso pelo celular)
-
-### 1. Criar repositório no GitHub
+O Yahoo às vezes devolve a sessão atual com Open/High/Low zerados. Com um token
+gratuito da [brapi.dev](https://brapi.dev) o app corrige essa barra com o spot real.
 
 ```bash
-cd estrategia_acumulacao   # ou a pasta raiz
-git init
-git add .
-git commit -m "feat: monitor estrategia ETF opcoes"
-gh repo create estrategia-acumulacao --private --source=. --push
+# .streamlit/secrets.toml  (local, ignorado pelo git)
+BRAPI_TOKEN = "seu_token"
 ```
 
-> O arquivo `.gitignore` já exclui `.env`, `secrets.toml` e dados locais.
-
-### 2. Conectar ao Streamlit Cloud
-
-1. Acesse [share.streamlit.io](https://share.streamlit.io)
-2. Clique em **New app**
-3. Selecione o repositório e o arquivo `app.py`
-4. Em **Advanced settings → Secrets**, cole o conteúdo do seu `secrets.toml`:
-
-```toml
-DATABASE_URL = "postgresql://postgres:SUA_SENHA@SEU_HOST:5432/postgres"
-EMAIL_REMETENTE = "seu@gmail.com"
-EMAIL_SENHA = "xxxx xxxx xxxx xxxx"
-EMAIL_DESTINATARIO = "seu@gmail.com"
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = "587"
-```
-
-5. Clique em **Deploy**
-
-### 3. Restringir acesso (somente você)
-
-1. No painel do Streamlit Cloud → **Settings → Sharing**
-2. Selecione **Only specific people can view this app**
-3. Adicione seu e-mail
+No Streamlit Cloud: **Manage app → Settings → Secrets**, cole a mesma linha e
+faça **Reboot app**. Sem token, o app descarta a barra corrompida e avisa na tela.
 
 ---
 
-## Estrutura do Projeto
-
-```
-estrategia_acumulacao/
-├── app.py                     # Entry point — navegação entre páginas
-├── config.py                  # Constantes da estratégia (edite aqui para ajustar regras)
-├── requirements.txt
-├── .gitignore
-├── .env.example
-├── .streamlit/
-│   ├── config.toml            # Tema escuro
-│   └── secrets.toml.example   # Template de credenciais
-├── modulos/
-│   ├── banco.py               # Banco de dados (Supabase PostgreSQL)
-│   ├── mercado.py             # Dados de mercado (yfinance)
-│   ├── estrategia.py          # Motor de regras (5 passos)
-│   ├── alertas.py             # Alertas por e-mail
-│   ├── bs.py                  # Black-Scholes e Selic
-│   └── componentes.py         # Helpers de UI compartilhados
-└── pages/
-    ├── 1_Dashboard.py         # Painel principal (atualização automática)
-    ├── 2_Carteira.py          # Opções, ETFs, caixa e aportes (página central)
-    └── 3_Analise_Semanal.py   # Checklist semanal e gráfico com MAs
-```
-
----
-
-## Ajustar Parâmetros da Estratégia
-
-Edite apenas `config.py`:
-
-| Constante | Valor padrão | Significado |
-|---|---|---|
-| `ALOCACAO_ALVO` | 70/20/10 | Alvo por ticker |
-| `CAIXA_MIN_PCT` | 5 % | Caixa mínimo do patrimônio |
-| `CALL_STRIKE_OTM_PCT` | 3 % | Strike da CALL acima do preço |
-| `LIMIAR_QUEDA_PUT` | -1,5 % | Queda que aciona prioridade PUT |
-| `LIMIAR_ALTA_CALL` | +2,0 % | Alta que aciona prioridade CALL |
-| `MA_PERIODO` | 50 dias | Média móvel usada na decisão |
-| `MA_VISUALIZACAO` | 50/100/200 | MAs exibidas nos gráficos |
-| `LIMIAR_RECOMPRA_PCT` | 2 % | Movimento favorável para alerta de recompra |
-| `APORTE_MENSAL` | R$ 5.000 | Sugestão padrão de aporte |
-| `REFRESH_INTERVAL_SECONDS` | 300 s | Frequência de atualização do dashboard |
-
----
-
-## Fluxo de Caixa
-
-O saldo em **Caixa e Movimentações** (página Carteira) reflete o dinheiro líquido na corretora:
-
-| Evento | Movimento |
-|---|---|
-| Venda de opção (prêmio) | ENTRADA automática |
-| Recompra de opção | SAÍDA automática (bloqueada se saldo insuficiente) |
-| PUT exercida | SAÍDA = strike × quantidade (compra das ações) |
-| CALL exercida | ENTRADA = strike × quantidade (venda das ações) |
-| Aporte registrado | ENTRADA do valor total + SAÍDA do valor investido em ETFs |
-| Depósito/saque manual | ENTRADA ou SAÍDA via formulário de caixa |
-
-PUTs abertas reservam `strike × quantidade` do caixa (exibido como **Comprometido**).
-Se o caixa for insuficiente para exercício ou recompra, registre um aporte ou depósito antes de encerrar a posição.
-
----
-
-## Atualizar o App Após Mudanças
+## Deploy
 
 ```bash
 git add .
@@ -196,4 +57,63 @@ git commit -m "ajuste: ..."
 git push
 ```
 
-O Streamlit Cloud detecta o push e atualiza automaticamente em ~1 minuto.
+O Streamlit Cloud republica sozinho em ~1 minuto.
+
+---
+
+## Estrutura
+
+```
+estrategia_acumulacao/
+├── app.py                     # navegação (Sinais, Análise, A Regra)
+├── config.py                  # ativos, limiares, delta, prêmio mínimo
+├── requirements.txt
+├── modulos/
+│   ├── mercado.py             # yfinance + correção de barra via brapi
+│   ├── estrategia.py          # regra por ativo (viés, strike, prêmio)
+│   ├── bs.py                  # Black-Scholes, vol histórica, Selic (BCB)
+│   ├── opcoes_b3.py           # brapi, strike por delta, delta/BS
+│   └── componentes.py         # formatação de UI
+├── pages/
+│   ├── 1_Sinais.py            # tabela de sinais dos 4 ativos
+│   ├── 2_Analise_Ativo.py     # gráfico + detalhe do ativo escolhido
+│   └── 3_Regra.py             # a regra e a expectativa realista
+└── tests/                     # testes puros (sem rede)
+```
+
+---
+
+## Ajustar a regra
+
+Tudo em `config.py`:
+
+| Constante | Padrão | Significado |
+|---|---|---|
+| `TICKERS` | BOVA11, VALE3, ITUB4, PRIO3 | ativos monitorados |
+| `MA_PERIODO` | 50 | média que define o viés |
+| `DELTA_PUT_ALVO` | -0,25 | risco alvo da PUT (~25 % de exercício) |
+| `CALL_STRIKE_OTM_PCT` | 3 % | distância da CALL |
+| `PREMIO_MIN_PCT` | 0,6 % | prêmio mínimo por ciclo, em % do preço |
+| `LIMIAR_QUEDA_PUT` | -1,5 % | queda que aciona prioridade |
+| `LIMIAR_ALTA_CALL` | +2,0 % | alta que aciona prioridade |
+| `DIAS_VENCIMENTO_PADRAO` | 30 | prazo usado no cálculo |
+
+---
+
+## Testes
+
+```bash
+pip install pytest
+pytest tests/ -q
+```
+
+Cobrem: viés PUT/CALL, bloqueio por prêmio baixo, strike por delta e correção
+da barra corrompida.
+
+---
+
+## Aviso
+
+Ferramenta de leitura de mercado, **não** é recomendação de investimento.
+Prêmios são teóricos (Black-Scholes com volatilidade histórica); o que vale é o
+**bid real** no Home Broker. Opções têm risco de perda relevante.

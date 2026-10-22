@@ -1,61 +1,39 @@
-"""Strategy constants — edit here to adjust rules without touching business logic."""
+"""Strategy constants — pure market-signal app (no personal data stored).
 
-# Target portfolio allocation (must sum to 1.0)
-ALOCACAO_ALVO: dict[str, float] = {
-    "BOVA11": 0.70,
-    "IVV":    0.20,
-    "HASH11": 0.10,
-}
+The app never records positions, cash or contributions. It only reads market
+data and answers: "which option would I sell on this asset today, and at what
+strike?".
+"""
 
-# yfinance tickers
-# IVV is USD-denominated (NYSE); price is converted to BRL for allocation calculations
+# Assets monitored (name → yfinance ticker)
 TICKERS: dict[str, str] = {
     "BOVA11": "BOVA11.SA",
-    "IVV":    "IVV",        # NYSE — USD
-    "HASH11": "HASH11.SA",
+    "VALE3":  "VALE3.SA",
+    "ITUB4":  "ITUB4.SA",
+    "PRIO3":  "PRIO3.SA",
 }
 
-# Tickers whose prices are in USD and need BRL conversion for allocation math
-TICKERS_USD: set[str] = {"IVV"}
+# Moving averages
+MA_PERIODO: int = 50            # decision MA (bias)
+MA_VISUALIZACAO: list[int] = [50, 100, 200]
+HISTORICO_PERIODO: str = "400d"
 
-# yfinance ticker for USD/BRL exchange rate
-TICKER_USDBRL: str = "USDBRL=X"
+# Daily moves that flag maximum priority (in the direction of the bias)
+LIMIAR_QUEDA_PUT: float = -0.015   # drop >= 1.5 % → PUT priority
+LIMIAR_ALTA_CALL: float = 0.020    # rise >= 2.0 % → CALL priority
 
-# Minimum cash as fraction of total portfolio
-CAIXA_MIN_PCT: float = 0.05
-
-# CALL strike distance above current price (3 %)
+# Strike selection
+# PUT: strike whose delta is closest to this (≈ 25 % exercise chance)
+DELTA_PUT_ALVO: float = -0.25
+# CALL: fixed 3 % OTM above spot
 CALL_STRIKE_OTM_PCT: float = 0.03
 
-# Thresholds that trigger maximum-priority alerts
-LIMIAR_QUEDA_PUT: float = -0.015   # daily drop >= 1.5 % → PUT priority
-LIMIAR_ALTA_CALL: float = 0.020    # daily rise >= 2.0 % → CALL priority
+# Minimum theoretical premium per share, as a fraction of spot price
+# (0.6 % per 30-day cycle). Percentual so low-priced stocks are not penalised.
+PREMIO_MIN_PCT: float = 0.006
 
-# Movement of the underlying that signals a profitable buyback opportunity
-# PUT sold: underlying rises >= this → PUT is cheaper, good to close
-# CALL sold: underlying falls >= this → CALL is cheaper, good to close
-LIMIAR_RECOMPRA_PCT: float = 0.02
-
-# Moving-average window used for strategy decisions (days)
-MA_PERIODO: int = 50
-
-# Additional MAs shown on charts for visual reference only
-MA_VISUALIZACAO: list[int] = [50, 100, 200]
-
-# Fixed monthly contribution amount (BRL)
-APORTE_MENSAL: float = 5_000.0
-
-# PUT sell rule (operate little: 1 PUT/month max)
-# Sell only with delta in this band (~20-30% exercise probability)
-DELTA_PUT_MIN: float = -0.30
-DELTA_PUT_MAX: float = -0.20
-# Minimum bid premium per share — below this, staying out is the position
-PREMIO_MIN_PUT: float = 1.50
-# Max share of cash committed to PUT reserves (strike × qty)
-MAX_COMPROMETIDO_PCT: float = 0.50
+# Default days to expiry used for the premium/strike math
+DIAS_VENCIMENTO_PADRAO: int = 30
 
 # Dashboard auto-refresh interval (seconds)
 REFRESH_INTERVAL_SECONDS: int = 300
-
-# History window for fetching prices (must be > largest MA in MA_VISUALIZACAO)
-HISTORICO_PERIODO: str = "400d"
